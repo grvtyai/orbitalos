@@ -3,11 +3,14 @@ use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use adw::prelude::*;
+use gtk::glib;
 use gtk::prelude::*;
 use libadwaita as adw;
 
 use orbital_core::domain::note::{NewNote, NoteDocument, NoteId, NoteSummary};
 use orbital_core::{NoteRepository, OrbitalApp, OrbitalDatabase, OrbitalPaths};
+
+const AUTOSAVE_DELAY_MS: u64 = 900;
 
 fn main() {
     adw::init().expect("Failed to initialize Libadwaita");
@@ -68,6 +71,8 @@ struct DriftUi {
     status_label: gtk::Label,
     notes: RefCell<Vec<NoteSummary>>,
     selected_note_id: RefCell<Option<NoteId>>,
+    autosave_source: RefCell<Option<glib::SourceId>>,
+    dirty: Cell<bool>,
     loading_ui: Cell<bool>,
 }
 
@@ -77,7 +82,6 @@ impl DriftUi {
         let database = OrbitalDatabase::open(&paths)?;
 
         let new_button = gtk::Button::builder().label("New Page").build();
-        let save_button = gtk::Button::builder().label("Save").build();
 
         let list_box = gtk::ListBox::builder()
             .selection_mode(gtk::SelectionMode::Single)
@@ -115,11 +119,13 @@ impl DriftUi {
             status_label,
             notes: RefCell::new(Vec::new()),
             selected_note_id: RefCell::new(None),
+            autosave_source: RefCell::new(None),
+            dirty: Cell::new(false),
             loading_ui: Cell::new(false),
         });
 
-        let window = build_window(app, &ui, &new_button, &save_button, &body_view);
-        connect_actions(&ui, &new_button, &save_button);
+        let window = build_window(app, &ui, &new_button, &body_view);
+        connect_actions(&ui, &new_button, &window);
         ui.reload_notes(None)?;
 
         if ui.notes.borrow().is_empty() {
@@ -180,19 +186,6 @@ impl DriftUi {
         Ok(())
     }
 
-    fn save_current_note(&self) -> orbital_core::OrbitalResult<()> {
-        let Some(saved) = self.persist_editor_to_database()? else {
-            self.set_status("Nothing selected");
-            return Ok(());
-        };
-        self.selected_note_id.replace(Some(saved.summary.id.clone()));
-        self.reload_notes(Some(saved.summary.id.clone()))?;
-        self.populate_editor(&saved);
-        self.set_status("Page saved");
-
-        Ok(())
-    }
-
     fn load_note_into_editor(&self, index: usize) -> orbital_core::OrbitalResult<()> {
         let Some(summary) = self.notes.borrow().get(index).cloned() else {
             return Ok(());
@@ -200,7 +193,7 @@ impl DriftUi {
 
         if let Some(current_id) = self.selected_note_id.borrow().clone() {
             if current_id != summary.id {
-                let _ = self.persist_editor_to_database()?;
+                let _ = self.flush_autosave()?;
             }
         }
 
@@ -221,14 +214,18 @@ impl DriftUi {
     }
 
     fn populate_editor(&self, note: &NoteDocument) {
+        self.cancel_autosave();
         self.loading_ui.set(true);
+        self.dirty.set(false);
         self.title_entry.set_text(&note.summary.title);
         self.body_buffer.set_text(&note.body);
         self.loading_ui.set(false);
     }
 
     fn clear_editor(&self) {
+        self.cancel_autosave();
         self.loading_ui.set(true);
+        self.dirty.set(false);
         self.selected_note_id.replace(None);
         self.title_entry.set_text("");
         self.body_buffer.set_text("");
@@ -272,11 +269,71 @@ impl DriftUi {
             body,
         };
 
-        Ok(Some(self.repository().save(&note)?))
+        let saved = self.repository().save(&note)?;
+        self.dirty.set(false);
+        Ok(Some(saved))
     }
 
     fn set_status(&self, message: &str) {
         self.status_label.set_text(message);
+    }
+
+    fn mark_dirty(&self) {
+        if self.loading_ui.get() {
+            return;
+        }
+
+        self.dirty.set(true);
+        self.set_status("Editing...");
+    }
+
+    fn schedule_autosave(self: &Rc<Self>) {
+        if self.loading_ui.get() || self.selected_note_id.borrow().is_none() {
+            return;
+        }
+
+        self.cancel_autosave();
+        self.set_status("Autosave scheduled");
+
+        let ui = Rc::clone(self);
+        let source_id = glib::timeout_add_local(
+            std::time::Duration::from_millis(AUTOSAVE_DELAY_MS),
+            move || {
+                if let Err(error) = ui.flush_autosave() {
+                    ui.set_status(&format!("Autosave failed: {error}"));
+                }
+
+                glib::ControlFlow::Break
+            },
+        );
+
+        self.autosave_source.replace(Some(source_id));
+    }
+
+    fn cancel_autosave(&self) {
+        if let Some(source_id) = self.autosave_source.borrow_mut().take() {
+            source_id.remove();
+        }
+    }
+
+    fn flush_autosave(&self) -> orbital_core::OrbitalResult<Option<NoteDocument>> {
+        self.cancel_autosave();
+
+        if !self.dirty.get() {
+            return Ok(None);
+        }
+
+        let saved = self.persist_editor_to_database()?;
+
+        if let Some(saved) = saved {
+            self.selected_note_id.replace(Some(saved.summary.id.clone()));
+            self.reload_notes(Some(saved.summary.id.clone()))?;
+            self.populate_editor(&saved);
+            self.set_status("Autosaved");
+            Ok(Some(saved))
+        } else {
+            Ok(None)
+        }
     }
 
     fn repository(&self) -> NoteRepository<'_> {
@@ -288,7 +345,6 @@ fn build_window(
     app: &adw::Application,
     ui: &Rc<DriftUi>,
     new_button: &gtk::Button,
-    save_button: &gtk::Button,
     body_view: &gtk::TextView,
 ) -> adw::ApplicationWindow {
     let window = adw::ApplicationWindow::builder()
@@ -305,7 +361,6 @@ fn build_window(
     header_title.add_css_class("title-3");
 
     header_bar.pack_start(new_button);
-    header_bar.pack_end(save_button);
     header_bar.set_title_widget(Some(&header_title));
 
     let root = gtk::Box::builder()
@@ -405,7 +460,11 @@ fn build_editor(ui: &Rc<DriftUi>, body_view: &gtk::TextView) -> gtk::Box {
     editor
 }
 
-fn connect_actions(ui: &Rc<DriftUi>, new_button: &gtk::Button, save_button: &gtk::Button) {
+fn connect_actions(
+    ui: &Rc<DriftUi>,
+    new_button: &gtk::Button,
+    window: &adw::ApplicationWindow,
+) {
     {
         let ui = Rc::clone(ui);
         new_button.connect_clicked(move |_| {
@@ -417,10 +476,17 @@ fn connect_actions(ui: &Rc<DriftUi>, new_button: &gtk::Button, save_button: &gtk
 
     {
         let ui = Rc::clone(ui);
-        save_button.connect_clicked(move |_| {
-            if let Err(error) = ui.save_current_note() {
-                ui.set_status(&format!("Save failed: {error}"));
-            }
+        ui.title_entry.connect_changed(move |_| {
+            ui.mark_dirty();
+            ui.schedule_autosave();
+        });
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        ui.body_buffer.connect_changed(move |_| {
+            ui.mark_dirty();
+            ui.schedule_autosave();
         });
     }
 
@@ -441,6 +507,17 @@ fn connect_actions(ui: &Rc<DriftUi>, new_button: &gtk::Button, save_button: &gtk
             if let Err(error) = ui.load_note_into_editor(row.index() as usize) {
                 ui.set_status(&format!("Load failed: {error}"));
             }
+        });
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        window.connect_close_request(move |_| {
+            if let Err(error) = ui.flush_autosave() {
+                ui.set_status(&format!("Final save failed: {error}"));
+            }
+
+            glib::Propagation::Proceed
         });
     }
 }
