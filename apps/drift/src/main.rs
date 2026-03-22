@@ -324,7 +324,11 @@ fn build_window(
     root.append(&sidebar_separator);
     root.append(&editor);
 
-    window.set_content(Some(&root));
+    let toolbar_view = adw::ToolbarView::new();
+    toolbar_view.add_top_bar(&header_bar);
+    toolbar_view.set_content(Some(&root));
+
+    window.set_content(Some(&toolbar_view));
     window
 }
 
