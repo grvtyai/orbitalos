@@ -75,6 +75,11 @@ struct DriftUi {
     notes: RefCell<Vec<NoteSummary>>,
     selected_note_id: RefCell<Option<NoteId>>,
     autosave_source: RefCell<Option<glib::SourceId>>,
+    bold_mode: Cell<bool>,
+    italic_mode: Cell<bool>,
+    underline_mode: Cell<bool>,
+    strikethrough_mode: Cell<bool>,
+    color_mode: RefCell<Option<String>>,
     dirty: Cell<bool>,
     loading_ui: Cell<bool>,
 }
@@ -130,6 +135,11 @@ impl DriftUi {
             notes: RefCell::new(Vec::new()),
             selected_note_id: RefCell::new(None),
             autosave_source: RefCell::new(None),
+            bold_mode: Cell::new(false),
+            italic_mode: Cell::new(false),
+            underline_mode: Cell::new(false),
+            strikethrough_mode: Cell::new(false),
+            color_mode: RefCell::new(None),
             dirty: Cell::new(false),
             loading_ui: Cell::new(false),
         });
@@ -318,6 +328,16 @@ impl DriftUi {
         self.status_label.set_text(message);
     }
 
+    fn pending_format(&self) -> rich_text::PendingFormat {
+        rich_text::PendingFormat {
+            bold: self.bold_mode.get(),
+            italic: self.italic_mode.get(),
+            underline: self.underline_mode.get(),
+            strikethrough: self.strikethrough_mode.get(),
+            color: self.color_mode.borrow().clone(),
+        }
+    }
+
     fn mark_dirty(&self) {
         if self.loading_ui.get() {
             return;
@@ -415,7 +435,7 @@ fn build_window(
     header_title.add_css_class("title-3");
 
     header_bar.pack_start(new_button);
-    header_bar.pack_end(edit_button);
+    header_bar.pack_start(edit_button);
     header_bar.set_title_widget(Some(&header_title));
 
     let content = gtk::Box::builder()
@@ -481,11 +501,11 @@ fn build_formatting_toolbar(ui: &Rc<DriftUi>) -> gtk::Box {
         .spacing(6)
         .build();
 
-    let bold_button = gtk::Button::with_label("B");
-    let italic_button = gtk::Button::with_label("I");
-    let underline_button = gtk::Button::with_label("U");
-    let strike_button = gtk::Button::with_label("S");
-    let clear_button = gtk::Button::with_label("Tx");
+    let bold_button = gtk::ToggleButton::new();
+    let italic_button = gtk::ToggleButton::new();
+    let underline_button = gtk::ToggleButton::new();
+    let strike_button = gtk::ToggleButton::new();
+    let clear_button = gtk::Button::with_label("Clear");
     let bullet_button = gtk::Button::with_label("List");
     let color_label = gtk::Label::builder().label("Color").xalign(0.0).build();
     let color_combo = gtk::ComboBoxText::new();
@@ -503,15 +523,48 @@ fn build_formatting_toolbar(ui: &Rc<DriftUi>) -> gtk::Box {
     color_combo.append(Some("orange"), "Orange");
     color_combo.set_active_id(Some("default"));
 
-    connect_toolbar_action(&bold_button, ui, |ui| rich_text::apply_bold(&ui.body_buffer));
-    connect_toolbar_action(&italic_button, ui, |ui| rich_text::apply_italic(&ui.body_buffer));
-    connect_toolbar_action(&underline_button, ui, |ui| {
-        rich_text::apply_underline(&ui.body_buffer)
+    bold_button.set_child(Some(&styled_toolbar_label("<b>Bold</b>")));
+    italic_button.set_child(Some(&styled_toolbar_label("<i>Italic</i>")));
+    underline_button.set_child(Some(&styled_toolbar_label("<u>Underline</u>")));
+    strike_button.set_child(Some(&styled_toolbar_label(
+        "<span strikethrough=\"true\">Strike</span>",
+    )));
+
+    connect_style_toggle(&bold_button, ui, |ui, active| {
+        ui.bold_mode.set(active);
+        rich_text::set_bold(&ui.body_buffer, active)
     });
-    connect_toolbar_action(&strike_button, ui, |ui| {
-        rich_text::apply_strikethrough(&ui.body_buffer)
+    connect_style_toggle(&italic_button, ui, |ui, active| {
+        ui.italic_mode.set(active);
+        rich_text::set_italic(&ui.body_buffer, active)
     });
-    connect_toolbar_action(&clear_button, ui, |ui| {
+    connect_style_toggle(&underline_button, ui, |ui, active| {
+        ui.underline_mode.set(active);
+        rich_text::set_underline(&ui.body_buffer, active)
+    });
+    connect_style_toggle(&strike_button, ui, |ui, active| {
+        ui.strikethrough_mode.set(active);
+        rich_text::set_strikethrough(&ui.body_buffer, active)
+    });
+    let bold_button_for_clear = bold_button.clone();
+    let italic_button_for_clear = italic_button.clone();
+    let underline_button_for_clear = underline_button.clone();
+    let strike_button_for_clear = strike_button.clone();
+    let color_combo_for_clear = color_combo.clone();
+
+    connect_toolbar_action(&clear_button, ui, move |ui| {
+        ui.bold_mode.set(false);
+        ui.italic_mode.set(false);
+        ui.underline_mode.set(false);
+        ui.strikethrough_mode.set(false);
+        ui.color_mode.replace(None);
+        ui.loading_ui.set(true);
+        bold_button_for_clear.set_active(false);
+        italic_button_for_clear.set_active(false);
+        underline_button_for_clear.set_active(false);
+        strike_button_for_clear.set_active(false);
+        color_combo_for_clear.set_active_id(Some("default"));
+        ui.loading_ui.set(false);
         rich_text::clear_formatting(&ui.body_buffer)
     });
     connect_toolbar_action(&bullet_button, ui, |ui| insert_bullet_list(&ui.body_buffer));
@@ -524,9 +577,11 @@ fn build_formatting_toolbar(ui: &Rc<DriftUi>) -> gtk::Box {
             };
 
             let changed = if color_id.as_str() == "default" {
-                rich_text::clear_color(&ui.body_buffer)
+                ui.color_mode.replace(None);
+                rich_text::set_color(&ui.body_buffer, None)
             } else {
-                rich_text::apply_color(&ui.body_buffer, color_id.as_str())
+                ui.color_mode.replace(Some(color_id.to_string()));
+                rich_text::set_color(&ui.body_buffer, Some(color_id.as_str()))
             };
 
             if changed {
@@ -535,8 +590,37 @@ fn build_formatting_toolbar(ui: &Rc<DriftUi>) -> gtk::Box {
                     ui.set_status(&format!("Formatting save failed: {error}"));
                 }
             } else {
-                ui.set_status("Select text first");
+                ui.set_status("Typing color updated");
             }
+        });
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        let body_buffer = ui.body_buffer.clone();
+
+        body_buffer.connect_insert_text(move |buffer, location, text| {
+            if ui.loading_ui.get() {
+                return;
+            }
+
+            let pending = ui.pending_format();
+            if pending.is_plain() {
+                return;
+            }
+
+            let start_offset = location.offset();
+            let char_count = text.chars().count() as i32;
+            let buffer = buffer.clone();
+
+            glib::idle_add_local_once(move || {
+                rich_text::apply_pending_format_by_offsets(
+                    &buffer,
+                    start_offset,
+                    char_count,
+                    &pending,
+                );
+            });
         });
     }
 
@@ -719,6 +803,40 @@ where
             ui.set_status("Select text first");
         }
     });
+}
+
+fn connect_style_toggle<F>(button: &gtk::ToggleButton, ui: &Rc<DriftUi>, action: F)
+where
+    F: Fn(&DriftUi, bool) -> bool + 'static,
+{
+    let ui = Rc::clone(ui);
+
+    button.connect_toggled(move |button| {
+        if ui.loading_ui.get() {
+            return;
+        }
+
+        let active = button.is_active();
+        let changed_selection = action(&ui, active);
+
+        if changed_selection {
+            ui.mark_dirty();
+            if let Err(error) = ui.save_immediately("Formatting saved") {
+                ui.set_status(&format!("Formatting save failed: {error}"));
+            }
+        } else if active {
+            ui.set_status("Typing mode enabled");
+        } else {
+            ui.set_status("Typing mode disabled");
+        }
+    });
+}
+
+fn styled_toolbar_label(markup: &str) -> gtk::Label {
+    let label = gtk::Label::new(None);
+    label.set_use_markup(true);
+    label.set_markup(markup);
+    label
 }
 
 fn insert_bullet_list(buffer: &gtk::TextBuffer) -> bool {

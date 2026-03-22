@@ -38,6 +38,15 @@ struct TextStyle {
     color: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingFormat {
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub strikethrough: bool,
+    pub color: Option<String>,
+}
+
 impl TextStyle {
     fn plain() -> Self {
         Self {
@@ -47,6 +56,26 @@ impl TextStyle {
             strikethrough: false,
             color: None,
         }
+    }
+}
+
+impl PendingFormat {
+    pub fn plain() -> Self {
+        Self {
+            bold: false,
+            italic: false,
+            underline: false,
+            strikethrough: false,
+            color: None,
+        }
+    }
+
+    pub fn is_plain(&self) -> bool {
+        !self.bold
+            && !self.italic
+            && !self.underline
+            && !self.strikethrough
+            && self.color.is_none()
     }
 }
 
@@ -120,16 +149,32 @@ pub fn apply_bold(buffer: &TextBuffer) -> bool {
     toggle_named_tag(buffer, TAG_BOLD)
 }
 
+pub fn set_bold(buffer: &TextBuffer, active: bool) -> bool {
+    set_named_tag(buffer, TAG_BOLD, active)
+}
+
 pub fn apply_italic(buffer: &TextBuffer) -> bool {
     toggle_named_tag(buffer, TAG_ITALIC)
+}
+
+pub fn set_italic(buffer: &TextBuffer, active: bool) -> bool {
+    set_named_tag(buffer, TAG_ITALIC, active)
 }
 
 pub fn apply_underline(buffer: &TextBuffer) -> bool {
     toggle_named_tag(buffer, TAG_UNDERLINE)
 }
 
+pub fn set_underline(buffer: &TextBuffer, active: bool) -> bool {
+    set_named_tag(buffer, TAG_UNDERLINE, active)
+}
+
 pub fn apply_strikethrough(buffer: &TextBuffer) -> bool {
     toggle_named_tag(buffer, TAG_STRIKETHROUGH)
+}
+
+pub fn set_strikethrough(buffer: &TextBuffer, active: bool) -> bool {
+    set_named_tag(buffer, TAG_STRIKETHROUGH, active)
 }
 
 pub fn apply_color(buffer: &TextBuffer, color_name: &str) -> bool {
@@ -168,6 +213,61 @@ pub fn clear_color(buffer: &TextBuffer) -> bool {
     true
 }
 
+pub fn set_color(buffer: &TextBuffer, color_name: Option<&str>) -> bool {
+    let Some((start, end)) = buffer.selection_bounds() else {
+        return false;
+    };
+
+    remove_color_tags(buffer, &start, &end);
+
+    if let Some(color_name) = color_name {
+        let Some((tag_name, _)) = COLOR_TAGS.iter().find(|(_, color)| *color == color_name) else {
+            return false;
+        };
+
+        buffer.apply_tag_by_name(tag_name, &start, &end);
+    }
+
+    true
+}
+
+pub fn apply_pending_format_by_offsets(
+    buffer: &TextBuffer,
+    start_offset: i32,
+    char_count: i32,
+    format: &PendingFormat,
+) {
+    if char_count <= 0 {
+        return;
+    }
+
+    let start = buffer.iter_at_offset(start_offset);
+    let end = buffer.iter_at_offset(start_offset + char_count);
+    clear_style_range(buffer, &start, &end);
+
+    if format.bold {
+        buffer.apply_tag_by_name(TAG_BOLD, &start, &end);
+    }
+
+    if format.italic {
+        buffer.apply_tag_by_name(TAG_ITALIC, &start, &end);
+    }
+
+    if format.underline {
+        buffer.apply_tag_by_name(TAG_UNDERLINE, &start, &end);
+    }
+
+    if format.strikethrough {
+        buffer.apply_tag_by_name(TAG_STRIKETHROUGH, &start, &end);
+    }
+
+    if let Some(color) = &format.color {
+        if let Some((tag_name, _)) = COLOR_TAGS.iter().find(|(_, value)| value == color) {
+            buffer.apply_tag_by_name(tag_name, &start, &end);
+        }
+    }
+}
+
 fn toggle_named_tag(buffer: &TextBuffer, tag_name: &str) -> bool {
     let Some((start, end)) = buffer.selection_bounds() else {
         return false;
@@ -180,6 +280,28 @@ fn toggle_named_tag(buffer: &TextBuffer, tag_name: &str) -> bool {
     }
 
     true
+}
+
+fn set_named_tag(buffer: &TextBuffer, tag_name: &str, active: bool) -> bool {
+    let Some((start, end)) = buffer.selection_bounds() else {
+        return false;
+    };
+
+    if active {
+        buffer.apply_tag_by_name(tag_name, &start, &end);
+    } else {
+        buffer.remove_tag_by_name(tag_name, &start, &end);
+    }
+
+    true
+}
+
+fn clear_style_range(buffer: &TextBuffer, start: &gtk::TextIter, end: &gtk::TextIter) {
+    buffer.remove_tag_by_name(TAG_BOLD, start, end);
+    buffer.remove_tag_by_name(TAG_ITALIC, start, end);
+    buffer.remove_tag_by_name(TAG_UNDERLINE, start, end);
+    buffer.remove_tag_by_name(TAG_STRIKETHROUGH, start, end);
+    remove_color_tags(buffer, start, end);
 }
 
 fn remove_color_tags(buffer: &TextBuffer, start: &gtk::TextIter, end: &gtk::TextIter) {
