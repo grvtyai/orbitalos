@@ -324,11 +324,15 @@ fn build_window(
     root.append(&sidebar_separator);
     root.append(&editor);
 
-    let toolbar_view = adw::ToolbarView::new();
-    toolbar_view.add_top_bar(&header_bar);
-    toolbar_view.set_content(Some(&root));
+    let shell = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(0)
+        .build();
 
-    window.set_content(Some(&toolbar_view));
+    shell.append(&header_bar);
+    shell.append(&root);
+
+    window.set_content(Some(&shell));
     window
 }
 
