@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/orbital-core"]
+members = ["apps/drift", "crates/orbital-core"]
 resolver = "2"
 
 [workspace.package]

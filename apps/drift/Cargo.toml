@@ -1,0 +1,11 @@
+[package]
+name = "drift"
+version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+libadwaita = "0.8.1"
+gtk = { version = "0.10.3", package = "gtk4" }
+orbital-core = { path = "../../crates/orbital-core" }
