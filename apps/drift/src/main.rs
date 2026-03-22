@@ -612,12 +612,16 @@ fn build_formatting_toolbar(ui: &Rc<DriftUi>) -> gtk::Box {
             let start_offset = location.offset();
             let char_count = text.chars().count() as i32;
             let buffer = buffer.clone();
+            let insert_mark = buffer.get_insert();
 
             glib::idle_add_local_once(move || {
+                let end_offset = buffer.iter_at_mark(&insert_mark).offset();
+                let applied_count = (end_offset - start_offset).max(0).min(char_count);
+
                 rich_text::apply_pending_format_by_offsets(
                     &buffer,
                     start_offset,
-                    char_count,
+                    applied_count,
                     &pending,
                 );
             });

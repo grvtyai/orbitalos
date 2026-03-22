@@ -60,16 +60,6 @@ impl TextStyle {
 }
 
 impl PendingFormat {
-    pub fn plain() -> Self {
-        Self {
-            bold: false,
-            italic: false,
-            underline: false,
-            strikethrough: false,
-            color: None,
-        }
-    }
-
     pub fn is_plain(&self) -> bool {
         !self.bold
             && !self.italic
@@ -145,50 +135,20 @@ pub fn serialize_buffer(buffer: &TextBuffer) -> Option<String> {
     serde_json::to_string(&spans).ok()
 }
 
-pub fn apply_bold(buffer: &TextBuffer) -> bool {
-    toggle_named_tag(buffer, TAG_BOLD)
-}
-
 pub fn set_bold(buffer: &TextBuffer, active: bool) -> bool {
     set_named_tag(buffer, TAG_BOLD, active)
-}
-
-pub fn apply_italic(buffer: &TextBuffer) -> bool {
-    toggle_named_tag(buffer, TAG_ITALIC)
 }
 
 pub fn set_italic(buffer: &TextBuffer, active: bool) -> bool {
     set_named_tag(buffer, TAG_ITALIC, active)
 }
 
-pub fn apply_underline(buffer: &TextBuffer) -> bool {
-    toggle_named_tag(buffer, TAG_UNDERLINE)
-}
-
 pub fn set_underline(buffer: &TextBuffer, active: bool) -> bool {
     set_named_tag(buffer, TAG_UNDERLINE, active)
 }
 
-pub fn apply_strikethrough(buffer: &TextBuffer) -> bool {
-    toggle_named_tag(buffer, TAG_STRIKETHROUGH)
-}
-
 pub fn set_strikethrough(buffer: &TextBuffer, active: bool) -> bool {
     set_named_tag(buffer, TAG_STRIKETHROUGH, active)
-}
-
-pub fn apply_color(buffer: &TextBuffer, color_name: &str) -> bool {
-    let Some((tag_name, _)) = COLOR_TAGS.iter().find(|(_, color)| *color == color_name) else {
-        return false;
-    };
-
-    let Some((start, end)) = buffer.selection_bounds() else {
-        return false;
-    };
-
-    remove_color_tags(buffer, &start, &end);
-    buffer.apply_tag_by_name(tag_name, &start, &end);
-    true
 }
 
 pub fn clear_formatting(buffer: &TextBuffer) -> bool {
@@ -200,15 +160,6 @@ pub fn clear_formatting(buffer: &TextBuffer) -> bool {
     buffer.remove_tag_by_name(TAG_ITALIC, &start, &end);
     buffer.remove_tag_by_name(TAG_UNDERLINE, &start, &end);
     buffer.remove_tag_by_name(TAG_STRIKETHROUGH, &start, &end);
-    remove_color_tags(buffer, &start, &end);
-    true
-}
-
-pub fn clear_color(buffer: &TextBuffer) -> bool {
-    let Some((start, end)) = buffer.selection_bounds() else {
-        return false;
-    };
-
     remove_color_tags(buffer, &start, &end);
     true
 }
@@ -241,8 +192,11 @@ pub fn apply_pending_format_by_offsets(
         return;
     }
 
-    let start = buffer.iter_at_offset(start_offset);
-    let end = buffer.iter_at_offset(start_offset + char_count);
+    let safe_start = start_offset.clamp(0, buffer.char_count());
+    let safe_end = (safe_start + char_count).clamp(safe_start, buffer.char_count());
+
+    let start = buffer.iter_at_offset(safe_start);
+    let end = buffer.iter_at_offset(safe_end);
     clear_style_range(buffer, &start, &end);
 
     if format.bold {
@@ -266,20 +220,6 @@ pub fn apply_pending_format_by_offsets(
             buffer.apply_tag_by_name(tag_name, &start, &end);
         }
     }
-}
-
-fn toggle_named_tag(buffer: &TextBuffer, tag_name: &str) -> bool {
-    let Some((start, end)) = buffer.selection_bounds() else {
-        return false;
-    };
-
-    if selection_has_tag(buffer, tag_name, &start, &end) {
-        buffer.remove_tag_by_name(tag_name, &start, &end);
-    } else {
-        buffer.apply_tag_by_name(tag_name, &start, &end);
-    }
-
-    true
 }
 
 fn set_named_tag(buffer: &TextBuffer, tag_name: &str, active: bool) -> bool {
@@ -308,30 +248,6 @@ fn remove_color_tags(buffer: &TextBuffer, start: &gtk::TextIter, end: &gtk::Text
     for (tag_name, _) in COLOR_TAGS {
         buffer.remove_tag_by_name(tag_name, start, end);
     }
-}
-
-fn selection_has_tag(
-    buffer: &TextBuffer,
-    tag_name: &str,
-    start: &gtk::TextIter,
-    end: &gtk::TextIter,
-) -> bool {
-    let Some(tag) = buffer.tag_table().lookup(tag_name) else {
-        return false;
-    };
-
-    let mut iter = start.clone();
-    while iter != *end {
-        if !iter.has_tag(&tag) {
-            return false;
-        }
-
-        if !iter.forward_char() {
-            break;
-        }
-    }
-
-    true
 }
 
 fn insert_spans(buffer: &TextBuffer, spans: &[RichTextSpan]) {
