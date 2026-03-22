@@ -166,7 +166,7 @@ fn selection_has_tag(
     };
 
     let mut iter = start.clone();
-    while !iter.equal(end) {
+    while iter != *end {
         if !iter.has_tag(&tag) {
             return false;
         }
@@ -209,7 +209,7 @@ fn collect_spans(buffer: &TextBuffer) -> Vec<RichTextSpan> {
     let mut current_text = String::new();
     let mut initialized = false;
 
-    while !iter.equal(&end) {
+    while iter != end {
         let style = style_at_iter(buffer, &iter);
         let mut next = iter.clone();
 
