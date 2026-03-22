@@ -307,7 +307,6 @@ fn build_window(
     header_bar.pack_start(new_button);
     header_bar.pack_end(save_button);
     header_bar.set_title_widget(Some(&header_title));
-    window.set_titlebar(Some(&header_bar));
 
     let root = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
