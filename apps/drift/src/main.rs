@@ -187,8 +187,8 @@ impl DriftUi {
         let text_block_frame = gtk::Frame::new(None);
         text_block_frame.set_child(Some(&text_block_body));
         text_block_frame.set_size_request(
-            block_layout::GRID_SIZE * 34,
-            block_layout::GRID_SIZE * 24,
+            block_layout::GRID_SIZE * 68,
+            block_layout::GRID_SIZE * 48,
         );
         text_block_frame.add_css_class("card");
 
@@ -428,6 +428,10 @@ impl DriftUi {
             .text_block
             .clamp_to_canvas();
 
+        self.render_text_block_layout(&layout);
+    }
+
+    fn render_text_block_layout(&self, layout: &block_layout::TextBlockLayout) {
         self.text_block_frame
             .set_size_request(layout.width, layout.height);
         self.body_canvas_fixed.move_(
@@ -438,8 +442,9 @@ impl DriftUi {
     }
 
     fn update_text_block_layout(&self, new_layout: block_layout::TextBlockLayout) {
-        self.canvas_layout.borrow_mut().text_block = new_layout.clamp_to_canvas();
-        self.apply_canvas_layout();
+        let preview = new_layout.preview_constrained();
+        self.canvas_layout.borrow_mut().text_block = preview.clone();
+        self.render_text_block_layout(&preview);
     }
 
     fn finalize_text_block_layout(&self) {
@@ -448,7 +453,7 @@ impl DriftUi {
             .borrow()
             .text_block
             .clone()
-            .snapped()
+            .snapped_to_grid()
             .clamp_to_canvas();
 
         self.canvas_layout.borrow_mut().text_block = finalized;
@@ -839,7 +844,6 @@ fn build_editor(ui: &Rc<DriftUi>) -> gtk::Box {
 
         let major_step = block_layout::GRID_SIZE.max(1);
         let minor_step = (block_layout::GRID_SIZE / 2).max(1);
-        let major_step_usize = major_step as usize;
         let minor_step_usize = minor_step as usize;
 
         for y in (0..height).step_by(minor_step_usize) {

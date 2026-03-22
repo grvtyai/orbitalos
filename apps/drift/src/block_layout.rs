@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 pub const CANVAS_WIDTH: i32 = 1600;
 pub const CANVAS_HEIGHT: i32 = 1200;
-pub const GRID_SIZE: i32 = 16;
+pub const GRID_SIZE: i32 = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteCanvasLayout {
@@ -23,19 +23,30 @@ impl Default for NoteCanvasLayout {
             text_block: TextBlockLayout {
                 x: GRID_SIZE * 3,
                 y: GRID_SIZE * 3,
-                width: GRID_SIZE * 34,
-                height: GRID_SIZE * 24,
+                width: GRID_SIZE * 68,
+                height: GRID_SIZE * 48,
             },
         }
     }
 }
 
 impl TextBlockLayout {
-    pub fn snapped(mut self) -> Self {
-        self.x = snap_value(self.x);
-        self.y = snap_value(self.y);
-        self.width = snap_value(self.width).max(GRID_SIZE * 8);
-        self.height = snap_value(self.height).max(GRID_SIZE * 8);
+    pub fn preview_constrained(mut self) -> Self {
+        self.width = self.width.max(GRID_SIZE * 8);
+        self.height = self.height.max(GRID_SIZE * 8);
+        self
+    }
+
+    pub fn snapped_to_grid(mut self) -> Self {
+        let snapped_left = snap_value(self.x);
+        let snapped_top = snap_value(self.y);
+        let snapped_right = snap_value(self.x + self.width);
+        let snapped_bottom = snap_value(self.y + self.height);
+
+        self.x = snapped_left;
+        self.y = snapped_top;
+        self.width = (snapped_right - snapped_left).max(GRID_SIZE * 8);
+        self.height = (snapped_bottom - snapped_top).max(GRID_SIZE * 8);
         self
     }
 
