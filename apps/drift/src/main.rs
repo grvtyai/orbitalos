@@ -74,7 +74,9 @@ struct DriftUi {
     body_canvas_fixed: gtk::Fixed,
     text_block_frame: gtk::Frame,
     text_block_drag_handle: gtk::Box,
+    text_block_header_revealer: gtk::Revealer,
     text_block_resize_handle: gtk::Label,
+    text_block_resize_revealer: gtk::Revealer,
     status_label: gtk::Label,
     edit_revealer: gtk::Revealer,
     notes: RefCell<Vec<NoteSummary>>,
@@ -148,6 +150,12 @@ impl DriftUi {
         text_block_drag_handle.append(&text_block_title);
         text_block_drag_handle.append(&text_block_hint);
 
+        let text_block_header_revealer = gtk::Revealer::builder()
+            .reveal_child(false)
+            .transition_type(gtk::RevealerTransitionType::Crossfade)
+            .child(&text_block_drag_handle)
+            .build();
+
         let text_block_resize_handle = gtk::Label::builder()
             .label("Resize")
             .halign(gtk::Align::End)
@@ -156,6 +164,12 @@ impl DriftUi {
             .margin_end(10)
             .build();
         text_block_resize_handle.add_css_class("dim-label");
+
+        let text_block_resize_revealer = gtk::Revealer::builder()
+            .reveal_child(false)
+            .transition_type(gtk::RevealerTransitionType::Crossfade)
+            .child(&text_block_resize_handle)
+            .build();
 
         let text_block_body = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -166,9 +180,9 @@ impl DriftUi {
             .vexpand(true)
             .child(&body_view)
             .build();
-        text_block_body.append(&text_block_drag_handle);
+        text_block_body.append(&text_block_header_revealer);
         text_block_body.append(&text_block_scroller);
-        text_block_body.append(&text_block_resize_handle);
+        text_block_body.append(&text_block_resize_revealer);
 
         let text_block_frame = gtk::Frame::new(None);
         text_block_frame.set_child(Some(&text_block_body));
@@ -176,6 +190,7 @@ impl DriftUi {
             block_layout::GRID_SIZE * 22,
             block_layout::GRID_SIZE * 16,
         );
+        text_block_frame.add_css_class("card");
 
         let status_label = gtk::Label::builder()
             .label("Ready")
@@ -196,7 +211,9 @@ impl DriftUi {
             body_canvas_fixed,
             text_block_frame,
             text_block_drag_handle,
+            text_block_header_revealer,
             text_block_resize_handle,
+            text_block_resize_revealer,
             status_label,
             edit_revealer,
             notes: RefCell::new(Vec::new()),
@@ -409,7 +426,6 @@ impl DriftUi {
             .borrow()
             .clone()
             .text_block
-            .snapped()
             .clamp_to_canvas();
 
         self.text_block_frame
@@ -422,7 +438,20 @@ impl DriftUi {
     }
 
     fn update_text_block_layout(&self, new_layout: block_layout::TextBlockLayout) {
-        self.canvas_layout.borrow_mut().text_block = new_layout.snapped().clamp_to_canvas();
+        self.canvas_layout.borrow_mut().text_block = new_layout.clamp_to_canvas();
+        self.apply_canvas_layout();
+    }
+
+    fn finalize_text_block_layout(&self) {
+        let finalized = self
+            .canvas_layout
+            .borrow()
+            .text_block
+            .clone()
+            .snapped()
+            .clamp_to_canvas();
+
+        self.canvas_layout.borrow_mut().text_block = finalized;
         self.apply_canvas_layout();
     }
 
@@ -805,10 +834,10 @@ fn build_editor(ui: &Rc<DriftUi>) -> gtk::Box {
     canvas_grid.set_content_width(block_layout::CANVAS_WIDTH);
     canvas_grid.set_content_height(block_layout::CANVAS_HEIGHT);
     canvas_grid.set_draw_func(|_, cr, width, height| {
-        cr.set_source_rgb(0.12, 0.12, 0.12);
+        cr.set_source_rgb(1.0, 1.0, 1.0);
         let _ = cr.paint();
 
-        cr.set_source_rgba(1.0, 1.0, 1.0, 0.06);
+        cr.set_source_rgba(0.0, 0.0, 0.0, 0.05);
         cr.set_line_width(1.0);
 
         let grid = block_layout::GRID_SIZE as usize;
@@ -922,6 +951,7 @@ fn connect_actions(
         {
             let ui = Rc::clone(&ui);
             gesture.connect_drag_end(move |_, _, _| {
+                ui.finalize_text_block_layout();
                 ui.mark_dirty();
                 if let Err(error) = ui.save_immediately("Block position saved") {
                     ui.set_status(&format!("Layout save failed: {error}"));
@@ -966,6 +996,7 @@ fn connect_actions(
         {
             let ui = Rc::clone(&ui);
             gesture.connect_drag_end(move |_, _, _| {
+                ui.finalize_text_block_layout();
                 ui.mark_dirty();
                 if let Err(error) = ui.save_immediately("Block size saved") {
                     ui.set_status(&format!("Layout save failed: {error}"));
@@ -974,6 +1005,23 @@ fn connect_actions(
         }
 
         resize_handle.add_controller(gesture);
+    }
+
+    {
+        let hover = gtk::EventControllerMotion::new();
+        let ui_for_enter = Rc::clone(ui);
+        hover.connect_enter(move |_, _, _| {
+            ui_for_enter.text_block_header_revealer.set_reveal_child(true);
+            ui_for_enter.text_block_resize_revealer.set_reveal_child(true);
+        });
+
+        let ui_for_leave = Rc::clone(ui);
+        hover.connect_leave(move |_| {
+            ui_for_leave.text_block_header_revealer.set_reveal_child(false);
+            ui_for_leave.text_block_resize_revealer.set_reveal_child(false);
+        });
+
+        ui.text_block_frame.add_controller(hover);
     }
 
     {
