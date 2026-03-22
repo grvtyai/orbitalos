@@ -1,0 +1,10 @@
+[workspace]
+members = ["crates/orbital-core"]
+resolver = "2"
+
+[workspace.package]
+# Edition 2021 keeps the workspace compatible with conservative Ubuntu LTS
+# toolchains while we bring up the first app crates.
+edition = "2021"
+repository = "https://github.com/grvtyai/orbitalos"
+rust-version = "1.83"
