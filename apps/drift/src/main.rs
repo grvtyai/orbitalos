@@ -196,6 +196,31 @@ impl DriftUi {
         Ok(())
     }
 
+    fn refresh_note_summaries(&self, preferred_note: Option<NoteId>) -> orbital_core::OrbitalResult<()> {
+        let repository = self.repository();
+        let notes = repository.list_active()?;
+        let selection = preferred_note.or_else(|| self.selected_note_id.borrow().clone());
+
+        self.loading_ui.set(true);
+        self.notes.replace(notes.clone());
+        self.clear_list_box();
+
+        for note in &notes {
+            self.list_box.append(&build_note_row(note));
+        }
+
+        if let Some(target) = selection {
+            if let Some(index) = notes.iter().position(|note| note.id == target) {
+                if let Some(row) = self.list_box.row_at_index(index as i32) {
+                    self.list_box.select_row(Some(&row));
+                }
+            }
+        }
+
+        self.loading_ui.set(false);
+        Ok(())
+    }
+
     fn load_note_into_editor(&self, index: usize) -> orbital_core::OrbitalResult<()> {
         let Some(summary) = self.notes.borrow().get(index).cloned() else {
             return Ok(());
@@ -342,13 +367,26 @@ impl DriftUi {
 
         if let Some(saved) = saved {
             self.selected_note_id.replace(Some(saved.summary.id.clone()));
-            self.reload_notes(Some(saved.summary.id.clone()))?;
-            self.populate_editor(&saved);
+            self.refresh_note_summaries(Some(saved.summary.id.clone()))?;
             self.set_status("Autosaved");
             Ok(Some(saved))
         } else {
             Ok(None)
         }
+    }
+
+    fn save_immediately(&self, success_message: &str) -> orbital_core::OrbitalResult<()> {
+        self.cancel_autosave();
+
+        let Some(saved) = self.persist_editor_to_database()? else {
+            return Ok(());
+        };
+
+        self.selected_note_id.replace(Some(saved.summary.id.clone()));
+        self.refresh_note_summaries(Some(saved.summary.id.clone()))?;
+        self.set_status(success_message);
+
+        Ok(())
     }
 
     fn repository(&self) -> NoteRepository<'_> {
@@ -493,8 +531,9 @@ fn build_formatting_toolbar(ui: &Rc<DriftUi>) -> gtk::Box {
 
             if changed {
                 ui.mark_dirty();
-                ui.schedule_autosave();
-                ui.set_status("Formatting updated");
+                if let Err(error) = ui.save_immediately("Formatting saved") {
+                    ui.set_status(&format!("Formatting save failed: {error}"));
+                }
             } else {
                 ui.set_status("Select text first");
             }
@@ -673,8 +712,9 @@ where
     button.connect_clicked(move |_| {
         if action(&ui) {
             ui.mark_dirty();
-            ui.schedule_autosave();
-            ui.set_status("Formatting updated");
+            if let Err(error) = ui.save_immediately("Formatting saved") {
+                ui.set_status(&format!("Formatting save failed: {error}"));
+            }
         } else {
             ui.set_status("Select text first");
         }
