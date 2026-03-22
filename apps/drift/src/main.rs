@@ -476,7 +476,9 @@ fn connect_actions(
 
     {
         let ui = Rc::clone(ui);
-        ui.title_entry.connect_changed(move |_| {
+        let title_entry = ui.title_entry.clone();
+
+        title_entry.connect_changed(move |_| {
             ui.mark_dirty();
             ui.schedule_autosave();
         });
@@ -484,7 +486,9 @@ fn connect_actions(
 
     {
         let ui = Rc::clone(ui);
-        ui.body_buffer.connect_changed(move |_| {
+        let body_buffer = ui.body_buffer.clone();
+
+        body_buffer.connect_changed(move |_| {
             ui.mark_dirty();
             ui.schedule_autosave();
         });
