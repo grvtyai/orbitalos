@@ -187,8 +187,8 @@ impl DriftUi {
         let text_block_frame = gtk::Frame::new(None);
         text_block_frame.set_child(Some(&text_block_body));
         text_block_frame.set_size_request(
-            block_layout::GRID_SIZE * 22,
-            block_layout::GRID_SIZE * 16,
+            block_layout::GRID_SIZE * 34,
+            block_layout::GRID_SIZE * 24,
         );
         text_block_frame.add_css_class("card");
 
@@ -837,21 +837,20 @@ fn build_editor(ui: &Rc<DriftUi>) -> gtk::Box {
         cr.set_source_rgb(1.0, 1.0, 1.0);
         let _ = cr.paint();
 
-        cr.set_source_rgba(0.0, 0.0, 0.0, 0.05);
-        cr.set_line_width(1.0);
+        let major_step = block_layout::GRID_SIZE.max(1) as usize;
+        let minor_step = (block_layout::GRID_SIZE / 2).max(1) as usize;
 
-        let grid = block_layout::GRID_SIZE as usize;
-        for x in (0..width).step_by(grid) {
-            cr.move_to(x as f64, 0.0);
-            cr.line_to(x as f64, height as f64);
+        for y in (0..height).step_by(minor_step) {
+            for x in (0..width).step_by(minor_step) {
+                let is_major = x % major_step == 0 && y % major_step == 0;
+                let radius = if is_major { 1.2 } else { 0.7 };
+                let alpha = if is_major { 0.12 } else { 0.06 };
+
+                cr.set_source_rgba(0.0, 0.0, 0.0, alpha);
+                cr.arc(x as f64, y as f64, radius, 0.0, std::f64::consts::TAU);
+                let _ = cr.fill();
+            }
         }
-
-        for y in (0..height).step_by(grid) {
-            cr.move_to(0.0, y as f64);
-            cr.line_to(width as f64, y as f64);
-        }
-
-        let _ = cr.stroke();
     });
 
     let canvas_overlay = gtk::Overlay::new();

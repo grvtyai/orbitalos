@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 pub const CANVAS_WIDTH: i32 = 1600;
 pub const CANVAS_HEIGHT: i32 = 1200;
-pub const GRID_SIZE: i32 = 24;
+pub const GRID_SIZE: i32 = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteCanvasLayout {
@@ -21,10 +21,10 @@ impl Default for NoteCanvasLayout {
     fn default() -> Self {
         Self {
             text_block: TextBlockLayout {
-                x: GRID_SIZE * 2,
-                y: GRID_SIZE * 2,
-                width: GRID_SIZE * 22,
-                height: GRID_SIZE * 16,
+                x: GRID_SIZE * 3,
+                y: GRID_SIZE * 3,
+                width: GRID_SIZE * 34,
+                height: GRID_SIZE * 24,
             },
         }
     }
