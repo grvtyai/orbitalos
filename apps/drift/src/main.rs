@@ -419,7 +419,9 @@ fn connect_actions(ui: &Rc<DriftUi>, new_button: &gtk::Button, save_button: &gtk
 
     {
         let ui = Rc::clone(ui);
-        ui.list_box.connect_row_selected(move |_, row| {
+        let list_box = ui.list_box.clone();
+
+        list_box.connect_row_selected(move |_, row| {
             if ui.loading_ui.get() {
                 return;
             }
