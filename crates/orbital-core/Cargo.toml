@@ -10,3 +10,4 @@ name = "orbital_core"
 path = "src/lib.rs"
 
 [dependencies]
+rusqlite = "0.33"
