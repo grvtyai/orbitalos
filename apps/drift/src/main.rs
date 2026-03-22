@@ -83,6 +83,8 @@ struct DriftUi {
     selected_note_id: RefCell<Option<NoteId>>,
     autosave_source: RefCell<Option<glib::SourceId>>,
     canvas_layout: RefCell<block_layout::NoteCanvasLayout>,
+    text_block_hovered: Cell<bool>,
+    text_block_interacting: Cell<bool>,
     bold_mode: Cell<bool>,
     italic_mode: Cell<bool>,
     underline_mode: Cell<bool>,
@@ -151,10 +153,11 @@ impl DriftUi {
         text_block_drag_handle.append(&text_block_hint);
 
         let text_block_header_revealer = gtk::Revealer::builder()
-            .reveal_child(false)
+            .reveal_child(true)
             .transition_type(gtk::RevealerTransitionType::Crossfade)
             .child(&text_block_drag_handle)
             .build();
+        text_block_drag_handle.set_opacity(0.0);
 
         let text_block_resize_handle = gtk::Label::builder()
             .label("Resize")
@@ -166,10 +169,11 @@ impl DriftUi {
         text_block_resize_handle.add_css_class("dim-label");
 
         let text_block_resize_revealer = gtk::Revealer::builder()
-            .reveal_child(false)
+            .reveal_child(true)
             .transition_type(gtk::RevealerTransitionType::Crossfade)
             .child(&text_block_resize_handle)
             .build();
+        text_block_resize_handle.set_opacity(0.0);
 
         let text_block_body = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -220,6 +224,8 @@ impl DriftUi {
             selected_note_id: RefCell::new(None),
             autosave_source: RefCell::new(None),
             canvas_layout: RefCell::new(block_layout::NoteCanvasLayout::default()),
+            text_block_hovered: Cell::new(false),
+            text_block_interacting: Cell::new(false),
             bold_mode: Cell::new(false),
             italic_mode: Cell::new(false),
             underline_mode: Cell::new(false),
@@ -477,6 +483,14 @@ impl DriftUi {
 
         self.dirty.set(true);
         self.set_status("Editing...");
+    }
+
+    fn sync_text_block_chrome(&self) {
+        let visible = self.text_block_hovered.get() || self.text_block_interacting.get();
+        let opacity = if visible { 1.0 } else { 0.0 };
+
+        self.text_block_drag_handle.set_opacity(opacity);
+        self.text_block_resize_handle.set_opacity(opacity);
     }
 
     fn schedule_autosave(self: &Rc<Self>) {
@@ -932,6 +946,8 @@ fn connect_actions(
             let ui = Rc::clone(&ui);
             let drag_origin = Rc::clone(&drag_origin);
             gesture.connect_drag_begin(move |_, _, _| {
+                ui.text_block_interacting.set(true);
+                ui.sync_text_block_chrome();
                 drag_origin.replace(Some(ui.canvas_layout.borrow().text_block.clone()));
             });
         }
@@ -956,7 +972,9 @@ fn connect_actions(
         {
             let ui = Rc::clone(&ui);
             gesture.connect_drag_end(move |_, _, _| {
+                ui.text_block_interacting.set(false);
                 ui.finalize_text_block_layout();
+                ui.sync_text_block_chrome();
                 ui.mark_dirty();
                 if let Err(error) = ui.save_immediately("Block position saved") {
                     ui.set_status(&format!("Layout save failed: {error}"));
@@ -977,6 +995,8 @@ fn connect_actions(
             let ui = Rc::clone(&ui);
             let resize_origin = Rc::clone(&resize_origin);
             gesture.connect_drag_begin(move |_, _, _| {
+                ui.text_block_interacting.set(true);
+                ui.sync_text_block_chrome();
                 resize_origin.replace(Some(ui.canvas_layout.borrow().text_block.clone()));
             });
         }
@@ -1001,7 +1021,9 @@ fn connect_actions(
         {
             let ui = Rc::clone(&ui);
             gesture.connect_drag_end(move |_, _, _| {
+                ui.text_block_interacting.set(false);
                 ui.finalize_text_block_layout();
+                ui.sync_text_block_chrome();
                 ui.mark_dirty();
                 if let Err(error) = ui.save_immediately("Block size saved") {
                     ui.set_status(&format!("Layout save failed: {error}"));
@@ -1016,14 +1038,14 @@ fn connect_actions(
         let hover = gtk::EventControllerMotion::new();
         let ui_for_enter = Rc::clone(ui);
         hover.connect_enter(move |_, _, _| {
-            ui_for_enter.text_block_header_revealer.set_reveal_child(true);
-            ui_for_enter.text_block_resize_revealer.set_reveal_child(true);
+            ui_for_enter.text_block_hovered.set(true);
+            ui_for_enter.sync_text_block_chrome();
         });
 
         let ui_for_leave = Rc::clone(ui);
         hover.connect_leave(move |_| {
-            ui_for_leave.text_block_header_revealer.set_reveal_child(false);
-            ui_for_leave.text_block_resize_revealer.set_reveal_child(false);
+            ui_for_leave.text_block_hovered.set(false);
+            ui_for_leave.sync_text_block_chrome();
         });
 
         ui.text_block_frame.add_controller(hover);
