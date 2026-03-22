@@ -658,13 +658,27 @@ fn build_window(
     let header_bar = adw::HeaderBar::new();
     let header_title = gtk::Label::builder()
         .label("Drift")
+        .xalign(0.0)
         .build();
     header_title.add_css_class("title-3");
 
+    let header_logo = gtk::Picture::for_filename(drift_logo_path());
+    header_logo.set_content_fit(gtk::ContentFit::Contain);
+    header_logo.set_can_shrink(true);
+    header_logo.set_size_request(22, 22);
+
+    let brand_box = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(8)
+        .margin_end(14)
+        .build();
+    brand_box.append(&header_logo);
+    brand_box.append(&header_title);
+
+    header_bar.pack_start(&brand_box);
     header_bar.pack_start(new_button);
     header_bar.pack_start(edit_button);
     header_bar.pack_end(settings_button);
-    header_bar.set_title_widget(Some(&header_title));
 
     let content = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
@@ -702,6 +716,13 @@ fn build_window(
 
     window.set_content(Some(&shell));
     window
+}
+
+fn drift_logo_path() -> &'static str {
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../orbital-assets/logos/drift_logo.png"
+    )
 }
 
 fn build_settings_window(
