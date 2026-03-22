@@ -252,9 +252,12 @@ fn remove_color_tags(buffer: &TextBuffer, start: &gtk::TextIter, end: &gtk::Text
 
 fn insert_spans(buffer: &TextBuffer, spans: &[RichTextSpan]) {
     for span in spans {
-        let start = buffer.end_iter();
-        let mut end = start.clone();
-        buffer.insert(&mut end, &span.text);
+        let start_offset = buffer.char_count();
+        let mut insert_at = buffer.end_iter();
+        buffer.insert(&mut insert_at, &span.text);
+        let end_offset = buffer.char_count();
+        let start = buffer.iter_at_offset(start_offset);
+        let end = buffer.iter_at_offset(end_offset);
 
         if span.bold {
             buffer.apply_tag_by_name(TAG_BOLD, &start, &end);
