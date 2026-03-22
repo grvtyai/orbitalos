@@ -12,6 +12,7 @@ use orbital_core::{NoteRepository, OrbitalApp, OrbitalDatabase, OrbitalPaths};
 
 mod block_layout;
 mod rich_text;
+mod settings;
 
 const AUTOSAVE_DELAY_MS: u64 = 900;
 
@@ -68,9 +69,11 @@ fn main() {
 
 struct DriftUi {
     database: OrbitalDatabase,
+    paths: OrbitalPaths,
     list_box: gtk::ListBox,
     title_entry: gtk::Entry,
     body_buffer: gtk::TextBuffer,
+    canvas_grid: gtk::DrawingArea,
     body_canvas_fixed: gtk::Fixed,
     text_block_frame: gtk::Frame,
     text_block_preview_frame: gtk::Frame,
@@ -82,6 +85,7 @@ struct DriftUi {
     selected_note_id: RefCell<Option<NoteId>>,
     autosave_source: RefCell<Option<glib::SourceId>>,
     canvas_layout: RefCell<block_layout::NoteCanvasLayout>,
+    settings: RefCell<settings::DriftSettings>,
     preview_layout: RefCell<Option<block_layout::TextBlockLayout>>,
     text_block_hovered: Cell<bool>,
     text_block_interacting: Cell<bool>,
@@ -97,6 +101,8 @@ struct DriftUi {
 impl DriftUi {
     fn build(app: &adw::Application) -> orbital_core::OrbitalResult<adw::ApplicationWindow> {
         let paths = OrbitalPaths::discover()?;
+        let app_settings = settings::DriftSettings::load(&paths);
+        let initial_layout = block_layout::default_note_canvas_layout(app_settings.grid_size());
         let database = OrbitalDatabase::open(&paths)?;
 
         let new_button = gtk::Button::builder().label("New Page").build();
@@ -126,6 +132,9 @@ impl DriftUi {
 
         let body_canvas_fixed = gtk::Fixed::new();
         body_canvas_fixed.set_size_request(block_layout::CANVAS_WIDTH, block_layout::CANVAS_HEIGHT);
+        let canvas_grid = gtk::DrawingArea::new();
+        canvas_grid.set_content_width(block_layout::CANVAS_WIDTH);
+        canvas_grid.set_content_height(block_layout::CANVAS_HEIGHT);
 
         let text_block_drag_handle = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
@@ -178,9 +187,10 @@ impl DriftUi {
 
         let text_block_frame = gtk::Frame::new(None);
         text_block_frame.set_child(Some(&text_block_body));
+        let initial_text_block = initial_layout.text_block.clone();
         text_block_frame.set_size_request(
-            block_layout::GRID_SIZE * 68,
-            block_layout::GRID_SIZE * 48,
+            initial_text_block.width,
+            initial_text_block.height,
         );
         text_block_frame.add_css_class("card");
 
@@ -188,8 +198,8 @@ impl DriftUi {
         let text_block_preview_body = gtk::Box::new(gtk::Orientation::Vertical, 0);
         text_block_preview_frame.set_child(Some(&text_block_preview_body));
         text_block_preview_frame.set_size_request(
-            block_layout::GRID_SIZE * 68,
-            block_layout::GRID_SIZE * 48,
+            initial_text_block.width,
+            initial_text_block.height,
         );
         text_block_preview_frame.add_css_class("card");
         text_block_preview_frame.set_can_target(false);
@@ -209,9 +219,11 @@ impl DriftUi {
 
         let ui = Rc::new(Self {
             database,
+            paths,
             list_box,
             title_entry,
             body_buffer,
+            canvas_grid,
             body_canvas_fixed,
             text_block_frame,
             text_block_preview_frame,
@@ -222,7 +234,8 @@ impl DriftUi {
             notes: RefCell::new(Vec::new()),
             selected_note_id: RefCell::new(None),
             autosave_source: RefCell::new(None),
-            canvas_layout: RefCell::new(block_layout::NoteCanvasLayout::default()),
+            canvas_layout: RefCell::new(initial_layout),
+            settings: RefCell::new(app_settings),
             preview_layout: RefCell::new(None),
             text_block_hovered: Cell::new(false),
             text_block_interacting: Cell::new(false),
@@ -235,8 +248,13 @@ impl DriftUi {
             loading_ui: Cell::new(false),
         });
 
-        let window = build_window(app, &ui, &new_button, &edit_button);
-        connect_actions(&ui, &new_button, &edit_button, &window);
+        let settings_button = gtk::Button::builder()
+            .icon_name("preferences-system-symbolic")
+            .tooltip_text("Settings")
+            .build();
+
+        let window = build_window(app, &ui, &new_button, &edit_button, &settings_button);
+        connect_actions(&ui, &new_button, &edit_button, &settings_button, &window);
         ui.reload_notes(None)?;
 
         if ui.notes.borrow().is_empty() {
@@ -283,11 +301,12 @@ impl DriftUi {
 
     fn create_note(&self) -> orbital_core::OrbitalResult<()> {
         let repository = self.repository();
-        let note = repository.create(NewNote::new(
-            generate_note_id(),
-            "Untitled page",
-            "",
-        ))?;
+        let mut new_note = NewNote::new(generate_note_id(), "Untitled page", "");
+        new_note.body_layout = block_layout::serialize_layout(&block_layout::default_note_canvas_layout(
+            self.grid_size(),
+        ));
+
+        let note = repository.create(new_note)?;
 
         self.selected_note_id.replace(Some(note.summary.id.clone()));
         self.reload_notes(Some(note.summary.id.clone()))?;
@@ -359,7 +378,10 @@ impl DriftUi {
         self.text_block_frame.set_opacity(1.0);
         self.title_entry.set_text(&note.summary.title);
         self.canvas_layout
-            .replace(block_layout::deserialize_layout(note.body_layout.as_deref()));
+            .replace(block_layout::deserialize_layout(
+                note.body_layout.as_deref(),
+                self.grid_size(),
+            ));
         self.apply_canvas_layout();
         self.sync_text_block_chrome();
         rich_text::set_buffer_content(
@@ -381,7 +403,7 @@ impl DriftUi {
         self.text_block_frame.set_opacity(1.0);
         self.title_entry.set_text("");
         self.canvas_layout
-            .replace(block_layout::NoteCanvasLayout::default());
+            .replace(block_layout::default_note_canvas_layout(self.grid_size()));
         self.apply_canvas_layout();
         self.sync_text_block_chrome();
         rich_text::set_buffer_content(&self.body_buffer, "", None);
@@ -442,7 +464,7 @@ impl DriftUi {
             .borrow()
             .clone()
             .text_block
-            .clamp_to_canvas();
+            .clamp_to_canvas(self.grid_size());
 
         self.render_text_block_layout(&layout);
     }
@@ -465,7 +487,9 @@ impl DriftUi {
     }
 
     fn update_text_block_layout(&self, new_layout: block_layout::TextBlockLayout) {
-        let preview = new_layout.preview_constrained().clamp_to_canvas();
+        let preview = new_layout
+            .preview_constrained(self.grid_size())
+            .clamp_to_canvas(self.grid_size());
         self.preview_layout.replace(Some(preview.clone()));
         self.render_preview_layout(&preview);
     }
@@ -476,8 +500,8 @@ impl DriftUi {
             .borrow()
             .clone()
             .unwrap_or_else(|| self.canvas_layout.borrow().text_block.clone())
-            .snapped_to_grid()
-            .clamp_to_canvas();
+            .snapped_to_grid(self.grid_size())
+            .clamp_to_canvas(self.grid_size());
 
         self.canvas_layout.borrow_mut().text_block = finalized.clone();
         self.render_text_block_layout(&finalized);
@@ -485,7 +509,12 @@ impl DriftUi {
 
     fn begin_text_block_interaction(&self) {
         self.text_block_interacting.set(true);
-        let current_layout = self.canvas_layout.borrow().text_block.clone().clamp_to_canvas();
+        let current_layout = self
+            .canvas_layout
+            .borrow()
+            .text_block
+            .clone()
+            .clamp_to_canvas(self.grid_size());
         self.preview_layout.replace(Some(current_layout.clone()));
         self.render_preview_layout(&current_layout);
         self.text_block_preview_frame.set_visible(true);
@@ -526,6 +555,23 @@ impl DriftUi {
 
         self.text_block_drag_handle.set_opacity(opacity);
         self.text_block_resize_handle.set_opacity(opacity);
+    }
+
+    fn grid_size(&self) -> i32 {
+        self.settings.borrow().grid_size()
+    }
+
+    fn update_grid_density(&self, grid_density: settings::GridDensity) {
+        self.settings.borrow_mut().grid_density = grid_density;
+
+        if let Err(error) = self.settings.borrow().save(&self.paths) {
+            self.set_status(&format!("Settings save failed: {error}"));
+            return;
+        }
+
+        self.canvas_grid.queue_draw();
+        self.apply_canvas_layout();
+        self.set_status("Grid setting updated");
     }
 
     fn schedule_autosave(self: &Rc<Self>) {
@@ -600,6 +646,7 @@ fn build_window(
     ui: &Rc<DriftUi>,
     new_button: &gtk::Button,
     edit_button: &gtk::ToggleButton,
+    settings_button: &gtk::Button,
 ) -> adw::ApplicationWindow {
     let window = adw::ApplicationWindow::builder()
         .application(app)
@@ -616,6 +663,7 @@ fn build_window(
 
     header_bar.pack_start(new_button);
     header_bar.pack_start(edit_button);
+    header_bar.pack_end(settings_button);
     header_bar.set_title_widget(Some(&header_title));
 
     let content = gtk::Box::builder()
@@ -654,6 +702,116 @@ fn build_window(
 
     window.set_content(Some(&shell));
     window
+}
+
+fn build_settings_window(
+    parent: &adw::ApplicationWindow,
+    ui: &Rc<DriftUi>,
+) -> adw::PreferencesWindow {
+    let window = adw::PreferencesWindow::builder()
+        .title("Drift Einstellungen")
+        .transient_for(parent)
+        .search_enabled(false)
+        .default_width(760)
+        .default_height(560)
+        .build();
+
+    let general_page = adw::PreferencesPage::builder()
+        .title("Allgemein")
+        .icon_name("preferences-system-symbolic")
+        .build();
+    let personalization_page = adw::PreferencesPage::builder()
+        .title("Personalisierung")
+        .icon_name("applications-graphics-symbolic")
+        .build();
+    let hotkeys_page = adw::PreferencesPage::builder()
+        .title("Hotkeys")
+        .icon_name("input-keyboard-symbolic")
+        .build();
+    let help_page = adw::PreferencesPage::builder()
+        .title("Hilfe")
+        .icon_name("help-browser-symbolic")
+        .build();
+
+    let general_group = adw::PreferencesGroup::builder()
+        .title("Canvas")
+        .description("Grundlegende Einstellungen fur den blockbasierten Editor.")
+        .build();
+    let grid_row = adw::ActionRow::builder()
+        .title("Grid-Feinheit")
+        .subtitle("Legt fest, wie fein das Raster dargestellt wird und woran Blocks einrasten.")
+        .build();
+    let labels = settings::grid_density_labels();
+    let grid_dropdown = gtk::DropDown::from_strings(&labels);
+    grid_dropdown.set_valign(gtk::Align::Center);
+    grid_dropdown.set_selected(ui.settings.borrow().grid_density.index());
+    grid_row.add_suffix(&grid_dropdown);
+    grid_row.set_activatable_widget(Some(&grid_dropdown));
+    general_group.add(&grid_row);
+    general_page.add(&general_group);
+
+    {
+        let ui = Rc::clone(ui);
+        grid_dropdown.connect_selected_notify(move |dropdown| {
+            let grid_density = settings::GridDensity::from_index(dropdown.selected());
+            if grid_density == ui.settings.borrow().grid_density {
+                return;
+            }
+
+            ui.update_grid_density(grid_density);
+        });
+    }
+
+    let personalization_group = adw::PreferencesGroup::builder()
+        .title("Personalisierung")
+        .description("Hier kommt spater die optische Anpassung von Drift hinein.")
+        .build();
+    personalization_group.add(&info_row(
+        "Editor-Design",
+        "Weitere Farben, Block-Stile und Ansichten folgen in einem spateren Schritt.",
+    ));
+    personalization_page.add(&personalization_group);
+
+    let hotkeys_group = adw::PreferencesGroup::builder()
+        .title("Tastatur")
+        .description("Die wichtigsten Arbeitsablaufe fur Drift.")
+        .build();
+    hotkeys_group.add(&info_row(
+        "Textformatierung",
+        "Formatierungs-Shortcuts und frei konfigurierbare Hotkeys kommen spater dazu.",
+    ));
+    hotkeys_group.add(&info_row(
+        "Navigation",
+        "Seitenwechsel, Block-Steuerung und Schnellaktionen werden hier gesammelt.",
+    ));
+    hotkeys_page.add(&hotkeys_group);
+
+    let help_group = adw::PreferencesGroup::builder()
+        .title("Hilfe")
+        .description("Kurzubersicht zum aktuellen Stand von Drift.")
+        .build();
+    help_group.add(&info_row(
+        "Drift aktuell",
+        "Notizen laufen lokal, blockbasiert und ohne Cloud. Weitere Blocktypen folgen schrittweise.",
+    ));
+    help_group.add(&info_row(
+        "Grid-Option",
+        "Die Grid-Feinheit in Allgemein verwendet aktuell den derzeitigen Rastergrad als Standard.",
+    ));
+    help_page.add(&help_group);
+
+    window.add(&general_page);
+    window.add(&personalization_page);
+    window.add(&hotkeys_page);
+    window.add(&help_page);
+    window
+}
+
+fn info_row(title: &str, subtitle: &str) -> adw::ActionRow {
+    adw::ActionRow::builder()
+        .title(title)
+        .subtitle(subtitle)
+        .build()
 }
 
 fn build_formatting_toolbar(ui: &Rc<DriftUi>) -> gtk::Box {
@@ -884,15 +1042,14 @@ fn build_editor(ui: &Rc<DriftUi>) -> gtk::Box {
     let title_entry = ui.title_entry.clone();
     title_entry.add_css_class("title-2");
 
-    let canvas_grid = gtk::DrawingArea::new();
-    canvas_grid.set_content_width(block_layout::CANVAS_WIDTH);
-    canvas_grid.set_content_height(block_layout::CANVAS_HEIGHT);
-    canvas_grid.set_draw_func(|_, cr, width, height| {
+    let canvas_grid = ui.canvas_grid.clone();
+    let ui_for_draw = Rc::clone(ui);
+    canvas_grid.set_draw_func(move |_, cr, width, height| {
         cr.set_source_rgb(1.0, 1.0, 1.0);
         let _ = cr.paint();
 
-        let major_step = block_layout::GRID_SIZE.max(1);
-        let minor_step = (block_layout::GRID_SIZE / 2).max(1);
+        let major_step = ui_for_draw.grid_size().max(1);
+        let minor_step = (major_step / 2).max(1);
         let minor_step_usize = minor_step as usize;
 
         for y in (0..height).step_by(minor_step_usize) {
@@ -934,6 +1091,7 @@ fn connect_actions(
     ui: &Rc<DriftUi>,
     new_button: &gtk::Button,
     edit_button: &gtk::ToggleButton,
+    settings_button: &gtk::Button,
     window: &adw::ApplicationWindow,
 ) {
     {
@@ -949,6 +1107,15 @@ fn connect_actions(
         let ui = Rc::clone(ui);
         edit_button.connect_toggled(move |button| {
             ui.edit_revealer.set_reveal_child(button.is_active());
+        });
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        let parent_window = window.clone();
+        settings_button.connect_clicked(move |_| {
+            let settings_window = build_settings_window(&parent_window, &ui);
+            settings_window.present();
         });
     }
 
