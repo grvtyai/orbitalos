@@ -25,6 +25,21 @@ Current milestone:
 - `orbital-assets/` shared visual assets
 - `crates/orbital-core/` shared domain and platform library
 - `docs/` project notes and architecture decisions
+- `scripts/` setup and bootstrap scripts
+
+## Ubuntu VM Bootstrap
+
+For a fresh Ubuntu LTS development or integration VM, run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/grvtyai/orbitalos/main/scripts/bootstrap-ubuntu-lts.sh | bash
+```
+
+This installs the current OrbitalOS base development dependencies:
+- build tools
+- GTK4 + Libadwaita development packages
+- SQLite development packages
+- Rust via `rustup`
 
 ## First Development Goal
 
