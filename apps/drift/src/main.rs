@@ -837,11 +837,13 @@ fn build_editor(ui: &Rc<DriftUi>) -> gtk::Box {
         cr.set_source_rgb(1.0, 1.0, 1.0);
         let _ = cr.paint();
 
-        let major_step = block_layout::GRID_SIZE.max(1) as usize;
-        let minor_step = (block_layout::GRID_SIZE / 2).max(1) as usize;
+        let major_step = block_layout::GRID_SIZE.max(1);
+        let minor_step = (block_layout::GRID_SIZE / 2).max(1);
+        let major_step_usize = major_step as usize;
+        let minor_step_usize = minor_step as usize;
 
-        for y in (0..height).step_by(minor_step) {
-            for x in (0..width).step_by(minor_step) {
+        for y in (0..height).step_by(minor_step_usize) {
+            for x in (0..width).step_by(minor_step_usize) {
                 let is_major = x % major_step == 0 && y % major_step == 0;
                 let radius = if is_major { 1.2 } else { 0.7 };
                 let alpha = if is_major { 0.12 } else { 0.06 };
