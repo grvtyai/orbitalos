@@ -4,7 +4,9 @@ use gtk::{pango, TextBuffer, TextTagTable};
 use serde::{Deserialize, Serialize};
 
 const TAG_BOLD: &str = "format-bold";
+const TAG_ITALIC: &str = "format-italic";
 const TAG_UNDERLINE: &str = "format-underline";
+const TAG_STRIKETHROUGH: &str = "format-strikethrough";
 const TAG_COLOR_RED: &str = "format-color-red";
 const TAG_COLOR_BLUE: &str = "format-color-blue";
 const TAG_COLOR_GREEN: &str = "format-color-green";
@@ -21,14 +23,18 @@ const COLOR_TAGS: &[(&str, &str)] = &[
 struct RichTextSpan {
     text: String,
     bold: bool,
+    italic: bool,
     underline: bool,
+    strikethrough: bool,
     color: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TextStyle {
     bold: bool,
+    italic: bool,
     underline: bool,
+    strikethrough: bool,
     color: Option<String>,
 }
 
@@ -36,7 +42,9 @@ impl TextStyle {
     fn plain() -> Self {
         Self {
             bold: false,
+            italic: false,
             underline: false,
+            strikethrough: false,
             color: None,
         }
     }
@@ -47,9 +55,14 @@ pub fn create_buffer() -> TextBuffer {
     let buffer = TextBuffer::new(Some(&tag_table));
 
     buffer.create_tag(Some(TAG_BOLD), &[("weight", &700i32)]);
+    buffer.create_tag(Some(TAG_ITALIC), &[("style", &pango::Style::Italic)]);
     buffer.create_tag(
         Some(TAG_UNDERLINE),
         &[("underline", &pango::Underline::Single)],
+    );
+    buffer.create_tag(
+        Some(TAG_STRIKETHROUGH),
+        &[("strikethrough", &true)],
     );
     buffer.create_tag(
         Some(TAG_COLOR_RED),
@@ -93,9 +106,10 @@ pub fn serialize_buffer(buffer: &TextBuffer) -> Option<String> {
         return None;
     }
 
-    if spans.iter().all(|span| {
-        !span.bold && !span.underline && span.color.is_none()
-    }) {
+    if spans
+        .iter()
+        .all(|span| !span.bold && !span.italic && !span.underline && !span.strikethrough && span.color.is_none())
+    {
         return None;
     }
 
@@ -106,8 +120,16 @@ pub fn apply_bold(buffer: &TextBuffer) -> bool {
     toggle_named_tag(buffer, TAG_BOLD)
 }
 
+pub fn apply_italic(buffer: &TextBuffer) -> bool {
+    toggle_named_tag(buffer, TAG_ITALIC)
+}
+
 pub fn apply_underline(buffer: &TextBuffer) -> bool {
     toggle_named_tag(buffer, TAG_UNDERLINE)
+}
+
+pub fn apply_strikethrough(buffer: &TextBuffer) -> bool {
+    toggle_named_tag(buffer, TAG_STRIKETHROUGH)
 }
 
 pub fn apply_color(buffer: &TextBuffer, color_name: &str) -> bool {
@@ -130,7 +152,18 @@ pub fn clear_formatting(buffer: &TextBuffer) -> bool {
     };
 
     buffer.remove_tag_by_name(TAG_BOLD, &start, &end);
+    buffer.remove_tag_by_name(TAG_ITALIC, &start, &end);
     buffer.remove_tag_by_name(TAG_UNDERLINE, &start, &end);
+    buffer.remove_tag_by_name(TAG_STRIKETHROUGH, &start, &end);
+    remove_color_tags(buffer, &start, &end);
+    true
+}
+
+pub fn clear_color(buffer: &TextBuffer) -> bool {
+    let Some((start, end)) = buffer.selection_bounds() else {
+        return false;
+    };
+
     remove_color_tags(buffer, &start, &end);
     true
 }
@@ -189,8 +222,16 @@ fn insert_spans(buffer: &TextBuffer, spans: &[RichTextSpan]) {
             buffer.apply_tag_by_name(TAG_BOLD, &start, &end);
         }
 
+        if span.italic {
+            buffer.apply_tag_by_name(TAG_ITALIC, &start, &end);
+        }
+
         if span.underline {
             buffer.apply_tag_by_name(TAG_UNDERLINE, &start, &end);
+        }
+
+        if span.strikethrough {
+            buffer.apply_tag_by_name(TAG_STRIKETHROUGH, &start, &end);
         }
 
         if let Some(color) = &span.color {
@@ -228,7 +269,9 @@ fn collect_spans(buffer: &TextBuffer) -> Vec<RichTextSpan> {
             spans.push(RichTextSpan {
                 text: current_text,
                 bold: current_style.bold,
+                italic: current_style.italic,
                 underline: current_style.underline,
+                strikethrough: current_style.strikethrough,
                 color: current_style.color.clone(),
             });
             current_text = String::new();
@@ -243,7 +286,9 @@ fn collect_spans(buffer: &TextBuffer) -> Vec<RichTextSpan> {
         spans.push(RichTextSpan {
             text: current_text,
             bold: current_style.bold,
+            italic: current_style.italic,
             underline: current_style.underline,
+            strikethrough: current_style.strikethrough,
             color: current_style.color.clone(),
         });
     }
@@ -261,8 +306,16 @@ fn style_at_iter(buffer: &TextBuffer, iter: &gtk::TextIter) -> TextStyle {
         style.bold = iter.has_tag(&tag);
     }
 
+    if let Some(tag) = buffer.tag_table().lookup(TAG_ITALIC) {
+        style.italic = iter.has_tag(&tag);
+    }
+
     if let Some(tag) = buffer.tag_table().lookup(TAG_UNDERLINE) {
         style.underline = iter.has_tag(&tag);
+    }
+
+    if let Some(tag) = buffer.tag_table().lookup(TAG_STRIKETHROUGH) {
+        style.strikethrough = iter.has_tag(&tag);
     }
 
     for (tag_name, color) in COLOR_TAGS {

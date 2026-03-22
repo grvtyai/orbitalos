@@ -71,6 +71,7 @@ struct DriftUi {
     title_entry: gtk::Entry,
     body_buffer: gtk::TextBuffer,
     status_label: gtk::Label,
+    edit_revealer: gtk::Revealer,
     notes: RefCell<Vec<NoteSummary>>,
     selected_note_id: RefCell<Option<NoteId>>,
     autosave_source: RefCell<Option<glib::SourceId>>,
@@ -84,6 +85,7 @@ impl DriftUi {
         let database = OrbitalDatabase::open(&paths)?;
 
         let new_button = gtk::Button::builder().label("New Page").build();
+        let edit_button = gtk::ToggleButton::builder().label("Edit").build();
 
         let list_box = gtk::ListBox::builder()
             .selection_mode(gtk::SelectionMode::Single)
@@ -113,12 +115,18 @@ impl DriftUi {
             .build();
         status_label.add_css_class("dim-label");
 
+        let edit_revealer = gtk::Revealer::builder()
+            .reveal_child(false)
+            .transition_type(gtk::RevealerTransitionType::SlideDown)
+            .build();
+
         let ui = Rc::new(Self {
             database,
             list_box,
             title_entry,
             body_buffer,
             status_label,
+            edit_revealer,
             notes: RefCell::new(Vec::new()),
             selected_note_id: RefCell::new(None),
             autosave_source: RefCell::new(None),
@@ -126,8 +134,8 @@ impl DriftUi {
             loading_ui: Cell::new(false),
         });
 
-        let window = build_window(app, &ui, &new_button, &body_view);
-        connect_actions(&ui, &new_button, &window);
+        let window = build_window(app, &ui, &new_button, &edit_button, &body_view);
+        connect_actions(&ui, &new_button, &edit_button, &window);
         ui.reload_notes(None)?;
 
         if ui.notes.borrow().is_empty() {
@@ -352,6 +360,7 @@ fn build_window(
     app: &adw::Application,
     ui: &Rc<DriftUi>,
     new_button: &gtk::Button,
+    edit_button: &gtk::ToggleButton,
     body_view: &gtk::TextView,
 ) -> adw::ApplicationWindow {
     let window = adw::ApplicationWindow::builder()
@@ -368,6 +377,7 @@ fn build_window(
     header_title.add_css_class("title-3");
 
     header_bar.pack_start(new_button);
+    header_bar.pack_end(edit_button);
     header_bar.set_title_widget(Some(&header_title));
 
     let content = gtk::Box::builder()
@@ -376,6 +386,7 @@ fn build_window(
         .build();
 
     let formatting_toolbar = build_formatting_toolbar(ui);
+    ui.edit_revealer.set_child(Some(&formatting_toolbar));
 
     let root = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
@@ -397,7 +408,7 @@ fn build_window(
         .spacing(0)
         .build();
 
-    content.append(&formatting_toolbar);
+    content.append(&ui.edit_revealer);
     content.append(&root);
 
     shell.append(&header_bar);
@@ -411,49 +422,101 @@ fn build_formatting_toolbar(ui: &Rc<DriftUi>) -> gtk::Box {
     let toolbar = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(8)
-        .margin_top(8)
-        .margin_bottom(8)
+        .margin_top(10)
+        .margin_bottom(10)
         .margin_start(16)
         .margin_end(16)
+        .hexpand(true)
+        .build();
+    toolbar.add_css_class("toolbar");
+
+    let style_group = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(6)
+        .build();
+    let insert_group = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(6)
+        .build();
+    let color_group = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(6)
         .build();
 
-    let bold_button = gtk::Button::with_label("Bold");
-    let underline_button = gtk::Button::with_label("Underline");
-    let red_button = gtk::Button::with_label("Red");
-    let blue_button = gtk::Button::with_label("Blue");
-    let green_button = gtk::Button::with_label("Green");
-    let orange_button = gtk::Button::with_label("Orange");
-    let clear_button = gtk::Button::with_label("Clear");
+    let bold_button = gtk::Button::with_label("B");
+    let italic_button = gtk::Button::with_label("I");
+    let underline_button = gtk::Button::with_label("U");
+    let strike_button = gtk::Button::with_label("S");
+    let clear_button = gtk::Button::with_label("Tx");
+    let bullet_button = gtk::Button::with_label("List");
+    let color_label = gtk::Label::builder().label("Color").xalign(0.0).build();
+    let color_combo = gtk::ComboBoxText::new();
+
+    bold_button.add_css_class("pill");
+    italic_button.add_css_class("pill");
+    underline_button.add_css_class("pill");
+    strike_button.add_css_class("pill");
+    clear_button.add_css_class("pill");
+    bullet_button.add_css_class("pill");
+    color_combo.append(Some("default"), "Default");
+    color_combo.append(Some("red"), "Red");
+    color_combo.append(Some("blue"), "Blue");
+    color_combo.append(Some("green"), "Green");
+    color_combo.append(Some("orange"), "Orange");
+    color_combo.set_active_id(Some("default"));
 
     connect_toolbar_action(&bold_button, ui, |ui| rich_text::apply_bold(&ui.body_buffer));
+    connect_toolbar_action(&italic_button, ui, |ui| rich_text::apply_italic(&ui.body_buffer));
     connect_toolbar_action(&underline_button, ui, |ui| {
         rich_text::apply_underline(&ui.body_buffer)
     });
-    connect_toolbar_action(&red_button, ui, |ui| {
-        rich_text::apply_color(&ui.body_buffer, "red")
-    });
-    connect_toolbar_action(&blue_button, ui, |ui| {
-        rich_text::apply_color(&ui.body_buffer, "blue")
-    });
-    connect_toolbar_action(&green_button, ui, |ui| {
-        rich_text::apply_color(&ui.body_buffer, "green")
-    });
-    connect_toolbar_action(&orange_button, ui, |ui| {
-        rich_text::apply_color(&ui.body_buffer, "orange")
+    connect_toolbar_action(&strike_button, ui, |ui| {
+        rich_text::apply_strikethrough(&ui.body_buffer)
     });
     connect_toolbar_action(&clear_button, ui, |ui| {
         rich_text::clear_formatting(&ui.body_buffer)
     });
+    connect_toolbar_action(&bullet_button, ui, |ui| insert_bullet_list(&ui.body_buffer));
 
-    toolbar.append(&bold_button);
-    toolbar.append(&underline_button);
+    {
+        let ui = Rc::clone(ui);
+        color_combo.connect_changed(move |combo| {
+            let Some(color_id) = combo.active_id() else {
+                return;
+            };
+
+            let changed = if color_id.as_str() == "default" {
+                rich_text::clear_color(&ui.body_buffer)
+            } else {
+                rich_text::apply_color(&ui.body_buffer, color_id.as_str())
+            };
+
+            if changed {
+                ui.mark_dirty();
+                ui.schedule_autosave();
+                ui.set_status("Formatting updated");
+            } else {
+                ui.set_status("Select text first");
+            }
+        });
+    }
+
+    style_group.append(&bold_button);
+    style_group.append(&italic_button);
+    style_group.append(&underline_button);
+    style_group.append(&strike_button);
+    style_group.append(&clear_button);
+
+    insert_group.append(&bullet_button);
+
+    color_group.append(&color_label);
+    color_group.append(&color_combo);
+
+    toolbar.append(&style_group);
     toolbar.append(&gtk::Separator::builder().orientation(gtk::Orientation::Vertical).build());
-    toolbar.append(&red_button);
-    toolbar.append(&blue_button);
-    toolbar.append(&green_button);
-    toolbar.append(&orange_button);
+    toolbar.append(&insert_group);
     toolbar.append(&gtk::Separator::builder().orientation(gtk::Orientation::Vertical).build());
-    toolbar.append(&clear_button);
+    toolbar.append(&color_group);
     toolbar
 }
 
@@ -530,6 +593,7 @@ fn build_editor(ui: &Rc<DriftUi>, body_view: &gtk::TextView) -> gtk::Box {
 fn connect_actions(
     ui: &Rc<DriftUi>,
     new_button: &gtk::Button,
+    edit_button: &gtk::ToggleButton,
     window: &adw::ApplicationWindow,
 ) {
     {
@@ -538,6 +602,13 @@ fn connect_actions(
             if let Err(error) = ui.create_note() {
                 ui.set_status(&format!("Create failed: {error}"));
             }
+        });
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        edit_button.connect_toggled(move |button| {
+            ui.edit_revealer.set_reveal_child(button.is_active());
         });
     }
 
@@ -608,6 +679,32 @@ where
             ui.set_status("Select text first");
         }
     });
+}
+
+fn insert_bullet_list(buffer: &gtk::TextBuffer) -> bool {
+    let Some((mut start, end)) = buffer.selection_bounds() else {
+        return false;
+    };
+
+    let selected_text = buffer.text(&start, &end, true).to_string();
+
+    if selected_text.trim().is_empty() {
+        return false;
+    }
+
+    let bulleted = selected_text
+        .lines()
+        .map(|line| format!("- {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    buffer.begin_user_action();
+    let mut delete_end = end.clone();
+    buffer.delete(&mut start, &mut delete_end);
+    buffer.insert(&mut start, &bulleted);
+    buffer.end_user_action();
+
+    true
 }
 
 fn build_note_row(note: &NoteSummary) -> gtk::ListBoxRow {
