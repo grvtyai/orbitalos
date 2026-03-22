@@ -10,6 +10,8 @@ use libadwaita as adw;
 use orbital_core::domain::note::{NewNote, NoteDocument, NoteId, NoteSummary};
 use orbital_core::{NoteRepository, OrbitalApp, OrbitalDatabase, OrbitalPaths};
 
+mod rich_text;
+
 const AUTOSAVE_DELAY_MS: u64 = 900;
 
 fn main() {
@@ -93,7 +95,7 @@ impl DriftUi {
             .hexpand(true)
             .build();
 
-        let body_buffer = gtk::TextBuffer::new(None);
+        let body_buffer = rich_text::create_buffer();
         let body_view = gtk::TextView::builder()
             .buffer(&body_buffer)
             .wrap_mode(gtk::WrapMode::WordChar)
@@ -218,7 +220,11 @@ impl DriftUi {
         self.loading_ui.set(true);
         self.dirty.set(false);
         self.title_entry.set_text(&note.summary.title);
-        self.body_buffer.set_text(&note.body);
+        rich_text::set_buffer_content(
+            &self.body_buffer,
+            &note.body,
+            note.body_markup.as_deref(),
+        );
         self.loading_ui.set(false);
     }
 
@@ -228,7 +234,7 @@ impl DriftUi {
         self.dirty.set(false);
         self.selected_note_id.replace(None);
         self.title_entry.set_text("");
-        self.body_buffer.set_text("");
+        rich_text::set_buffer_content(&self.body_buffer, "", None);
         self.loading_ui.set(false);
     }
 
@@ -267,6 +273,7 @@ impl DriftUi {
                 ..existing.summary
             },
             body,
+            body_markup: rich_text::serialize_buffer(&self.body_buffer),
         };
 
         let saved = self.repository().save(&note)?;
@@ -363,6 +370,13 @@ fn build_window(
     header_bar.pack_start(new_button);
     header_bar.set_title_widget(Some(&header_title));
 
+    let content = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(0)
+        .build();
+
+    let formatting_toolbar = build_formatting_toolbar(ui);
+
     let root = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(0)
@@ -383,11 +397,64 @@ fn build_window(
         .spacing(0)
         .build();
 
+    content.append(&formatting_toolbar);
+    content.append(&root);
+
     shell.append(&header_bar);
-    shell.append(&root);
+    shell.append(&content);
 
     window.set_content(Some(&shell));
     window
+}
+
+fn build_formatting_toolbar(ui: &Rc<DriftUi>) -> gtk::Box {
+    let toolbar = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(8)
+        .margin_top(8)
+        .margin_bottom(8)
+        .margin_start(16)
+        .margin_end(16)
+        .build();
+
+    let bold_button = gtk::Button::with_label("Bold");
+    let underline_button = gtk::Button::with_label("Underline");
+    let red_button = gtk::Button::with_label("Red");
+    let blue_button = gtk::Button::with_label("Blue");
+    let green_button = gtk::Button::with_label("Green");
+    let orange_button = gtk::Button::with_label("Orange");
+    let clear_button = gtk::Button::with_label("Clear");
+
+    connect_toolbar_action(&bold_button, ui, |ui| rich_text::apply_bold(&ui.body_buffer));
+    connect_toolbar_action(&underline_button, ui, |ui| {
+        rich_text::apply_underline(&ui.body_buffer)
+    });
+    connect_toolbar_action(&red_button, ui, |ui| {
+        rich_text::apply_color(&ui.body_buffer, "red")
+    });
+    connect_toolbar_action(&blue_button, ui, |ui| {
+        rich_text::apply_color(&ui.body_buffer, "blue")
+    });
+    connect_toolbar_action(&green_button, ui, |ui| {
+        rich_text::apply_color(&ui.body_buffer, "green")
+    });
+    connect_toolbar_action(&orange_button, ui, |ui| {
+        rich_text::apply_color(&ui.body_buffer, "orange")
+    });
+    connect_toolbar_action(&clear_button, ui, |ui| {
+        rich_text::clear_formatting(&ui.body_buffer)
+    });
+
+    toolbar.append(&bold_button);
+    toolbar.append(&underline_button);
+    toolbar.append(&gtk::Separator::builder().orientation(gtk::Orientation::Vertical).build());
+    toolbar.append(&red_button);
+    toolbar.append(&blue_button);
+    toolbar.append(&green_button);
+    toolbar.append(&orange_button);
+    toolbar.append(&gtk::Separator::builder().orientation(gtk::Orientation::Vertical).build());
+    toolbar.append(&clear_button);
+    toolbar
 }
 
 fn build_sidebar(ui: &Rc<DriftUi>) -> gtk::Box {
@@ -524,6 +591,23 @@ fn connect_actions(
             glib::Propagation::Proceed
         });
     }
+}
+
+fn connect_toolbar_action<F>(button: &gtk::Button, ui: &Rc<DriftUi>, action: F)
+where
+    F: Fn(&DriftUi) -> bool + 'static,
+{
+    let ui = Rc::clone(ui);
+
+    button.connect_clicked(move |_| {
+        if action(&ui) {
+            ui.mark_dirty();
+            ui.schedule_autosave();
+            ui.set_status("Formatting updated");
+        } else {
+            ui.set_status("Select text first");
+        }
+    });
 }
 
 fn build_note_row(note: &NoteSummary) -> gtk::ListBoxRow {

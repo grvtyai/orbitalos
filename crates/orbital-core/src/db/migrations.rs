@@ -12,6 +12,10 @@ const MIGRATIONS: &[Migration] = &[Migration {
     version: 1,
     name: "initial_schema",
     sql: include_str!("../../migrations/0001_initial.sql"),
+}, Migration {
+    version: 2,
+    name: "add_note_body_markup",
+    sql: include_str!("../../migrations/0002_add_note_body_markup.sql"),
 }];
 
 pub fn run_migrations(connection: &mut Connection) -> OrbitalResult<()> {

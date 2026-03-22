@@ -32,6 +32,7 @@ pub struct NewNote {
     pub id: NoteId,
     pub title: String,
     pub body: String,
+    pub body_markup: Option<String>,
     pub tags: Vec<String>,
 }
 
@@ -41,6 +42,7 @@ impl NewNote {
             id,
             title: title.into(),
             body: body.into(),
+            body_markup: None,
             tags: Vec::new(),
         }
     }
@@ -61,6 +63,7 @@ pub struct NoteSummary {
 pub struct NoteDocument {
     pub summary: NoteSummary,
     pub body: String,
+    pub body_markup: Option<String>,
 }
 
 pub fn note_excerpt(body: &str) -> String {
