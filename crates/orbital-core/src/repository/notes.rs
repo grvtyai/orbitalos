@@ -19,10 +19,17 @@ impl<'connection> NoteRepository<'connection> {
 
         self.connection.execute(
             "
-            INSERT INTO notes (id, title, body, body_markup, created_at, updated_at, archived_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?5, NULL)
+            INSERT INTO notes (id, title, body, body_markup, body_layout, created_at, updated_at, archived_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, NULL)
             ",
-            params![note.id.as_str(), note.title, note.body, note.body_markup, now],
+            params![
+                note.id.as_str(),
+                note.title,
+                note.body,
+                note.body_markup,
+                note.body_layout,
+                now
+            ],
         )?;
 
         self.replace_tags(&note.id, &note.tags)?;
@@ -35,7 +42,7 @@ impl<'connection> NoteRepository<'connection> {
     pub fn get(&self, id: &NoteId) -> OrbitalResult<Option<NoteDocument>> {
         let mut statement = self.connection.prepare(
             "
-            SELECT id, title, body, body_markup, created_at, updated_at, archived_at
+            SELECT id, title, body, body_markup, body_layout, created_at, updated_at, archived_at
             FROM notes
             WHERE id = ?1
             ",
@@ -48,14 +55,15 @@ impl<'connection> NoteRepository<'connection> {
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, Option<String>>(3)?,
-                    row.get::<_, i64>(4)?,
+                    row.get::<_, Option<String>>(4)?,
                     row.get::<_, i64>(5)?,
-                    row.get::<_, Option<i64>>(6)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, Option<i64>>(7)?,
                 ))
             })
             .optional()?;
 
-        note.map(|(id, title, body, body_markup, created_at, updated_at, archived_at)| {
+        note.map(|(id, title, body, body_markup, body_layout, created_at, updated_at, archived_at)| {
             Ok(NoteDocument {
                 summary: NoteSummary {
                     excerpt: note_excerpt(&body),
@@ -68,6 +76,7 @@ impl<'connection> NoteRepository<'connection> {
                 },
                 body,
                 body_markup,
+                body_layout,
             })
         })
         .transpose()
@@ -119,13 +128,14 @@ impl<'connection> NoteRepository<'connection> {
         let updated_rows = self.connection.execute(
             "
             UPDATE notes
-            SET title = ?1, body = ?2, body_markup = ?3, updated_at = ?4, archived_at = ?5
-            WHERE id = ?6
+            SET title = ?1, body = ?2, body_markup = ?3, body_layout = ?4, updated_at = ?5, archived_at = ?6
+            WHERE id = ?7
             ",
             params![
                 note.summary.title.as_str(),
                 note.body.as_str(),
                 note.body_markup.as_deref(),
+                note.body_layout.as_deref(),
                 now,
                 note.summary.archived_at,
                 note.summary.id.as_str()

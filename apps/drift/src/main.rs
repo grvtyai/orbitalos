@@ -10,6 +10,7 @@ use libadwaita as adw;
 use orbital_core::domain::note::{NewNote, NoteDocument, NoteId, NoteSummary};
 use orbital_core::{NoteRepository, OrbitalApp, OrbitalDatabase, OrbitalPaths};
 
+mod block_layout;
 mod rich_text;
 
 const AUTOSAVE_DELAY_MS: u64 = 900;
@@ -70,11 +71,16 @@ struct DriftUi {
     list_box: gtk::ListBox,
     title_entry: gtk::Entry,
     body_buffer: gtk::TextBuffer,
+    body_canvas_fixed: gtk::Fixed,
+    text_block_frame: gtk::Frame,
+    text_block_drag_handle: gtk::Box,
+    text_block_resize_handle: gtk::Label,
     status_label: gtk::Label,
     edit_revealer: gtk::Revealer,
     notes: RefCell<Vec<NoteSummary>>,
     selected_note_id: RefCell<Option<NoteId>>,
     autosave_source: RefCell<Option<glib::SourceId>>,
+    canvas_layout: RefCell<block_layout::NoteCanvasLayout>,
     bold_mode: Cell<bool>,
     italic_mode: Cell<bool>,
     underline_mode: Cell<bool>,
@@ -114,6 +120,63 @@ impl DriftUi {
             .vexpand(true)
             .build();
 
+        let body_canvas_fixed = gtk::Fixed::new();
+        body_canvas_fixed.set_size_request(block_layout::CANVAS_WIDTH, block_layout::CANVAS_HEIGHT);
+
+        let text_block_drag_handle = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(8)
+            .margin_top(8)
+            .margin_bottom(8)
+            .margin_start(12)
+            .margin_end(12)
+            .build();
+        text_block_drag_handle.add_css_class("toolbar");
+
+        let text_block_title = gtk::Label::builder()
+            .label("Text block")
+            .xalign(0.0)
+            .hexpand(true)
+            .build();
+        text_block_title.add_css_class("heading");
+        let text_block_hint = gtk::Label::builder()
+            .label("Drag here")
+            .xalign(1.0)
+            .build();
+        text_block_hint.add_css_class("dim-label");
+
+        text_block_drag_handle.append(&text_block_title);
+        text_block_drag_handle.append(&text_block_hint);
+
+        let text_block_resize_handle = gtk::Label::builder()
+            .label("Resize")
+            .halign(gtk::Align::End)
+            .margin_top(6)
+            .margin_bottom(8)
+            .margin_end(10)
+            .build();
+        text_block_resize_handle.add_css_class("dim-label");
+
+        let text_block_body = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(0)
+            .build();
+        let text_block_scroller = gtk::ScrolledWindow::builder()
+            .hexpand(true)
+            .vexpand(true)
+            .child(&body_view)
+            .build();
+        text_block_body.append(&text_block_drag_handle);
+        text_block_body.append(&text_block_scroller);
+        text_block_body.append(&text_block_resize_handle);
+
+        let text_block_frame = gtk::Frame::new(None);
+        text_block_frame.set_child(Some(&text_block_body));
+        text_block_frame.set_size_request(
+            block_layout::GRID_SIZE * 22,
+            block_layout::GRID_SIZE * 16,
+        );
+
         let status_label = gtk::Label::builder()
             .label("Ready")
             .xalign(0.0)
@@ -130,11 +193,16 @@ impl DriftUi {
             list_box,
             title_entry,
             body_buffer,
+            body_canvas_fixed,
+            text_block_frame,
+            text_block_drag_handle,
+            text_block_resize_handle,
             status_label,
             edit_revealer,
             notes: RefCell::new(Vec::new()),
             selected_note_id: RefCell::new(None),
             autosave_source: RefCell::new(None),
+            canvas_layout: RefCell::new(block_layout::NoteCanvasLayout::default()),
             bold_mode: Cell::new(false),
             italic_mode: Cell::new(false),
             underline_mode: Cell::new(false),
@@ -144,7 +212,7 @@ impl DriftUi {
             loading_ui: Cell::new(false),
         });
 
-        let window = build_window(app, &ui, &new_button, &edit_button, &body_view);
+        let window = build_window(app, &ui, &new_button, &edit_button);
         connect_actions(&ui, &new_button, &edit_button, &window);
         ui.reload_notes(None)?;
 
@@ -263,6 +331,9 @@ impl DriftUi {
         self.loading_ui.set(true);
         self.dirty.set(false);
         self.title_entry.set_text(&note.summary.title);
+        self.canvas_layout
+            .replace(block_layout::deserialize_layout(note.body_layout.as_deref()));
+        self.apply_canvas_layout();
         rich_text::set_buffer_content(
             &self.body_buffer,
             &note.body,
@@ -277,6 +348,9 @@ impl DriftUi {
         self.dirty.set(false);
         self.selected_note_id.replace(None);
         self.title_entry.set_text("");
+        self.canvas_layout
+            .replace(block_layout::NoteCanvasLayout::default());
+        self.apply_canvas_layout();
         rich_text::set_buffer_content(&self.body_buffer, "", None);
         self.loading_ui.set(false);
     }
@@ -317,6 +391,7 @@ impl DriftUi {
             },
             body,
             body_markup: rich_text::serialize_buffer(&self.body_buffer),
+            body_layout: block_layout::serialize_layout(&self.canvas_layout.borrow()),
         };
 
         let saved = self.repository().save(&note)?;
@@ -326,6 +401,29 @@ impl DriftUi {
 
     fn set_status(&self, message: &str) {
         self.status_label.set_text(message);
+    }
+
+    fn apply_canvas_layout(&self) {
+        let layout = self
+            .canvas_layout
+            .borrow()
+            .clone()
+            .text_block
+            .snapped()
+            .clamp_to_canvas();
+
+        self.text_block_frame
+            .set_size_request(layout.width, layout.height);
+        self.body_canvas_fixed.move_(
+            &self.text_block_frame,
+            layout.x as f64,
+            layout.y as f64,
+        );
+    }
+
+    fn update_text_block_layout(&self, new_layout: block_layout::TextBlockLayout) {
+        self.canvas_layout.borrow_mut().text_block = new_layout.snapped().clamp_to_canvas();
+        self.apply_canvas_layout();
     }
 
     fn pending_format(&self) -> rich_text::PendingFormat {
@@ -419,7 +517,6 @@ fn build_window(
     ui: &Rc<DriftUi>,
     new_button: &gtk::Button,
     edit_button: &gtk::ToggleButton,
-    body_view: &gtk::TextView,
 ) -> adw::ApplicationWindow {
     let window = adw::ApplicationWindow::builder()
         .application(app)
@@ -455,7 +552,7 @@ fn build_window(
     let sidebar_separator = gtk::Separator::builder()
         .orientation(gtk::Orientation::Vertical)
         .build();
-    let editor = build_editor(ui, body_view);
+    let editor = build_editor(ui);
 
     root.append(&sidebar);
     root.append(&sidebar_separator);
@@ -683,7 +780,7 @@ fn build_sidebar(ui: &Rc<DriftUi>) -> gtk::Box {
     sidebar
 }
 
-fn build_editor(ui: &Rc<DriftUi>, body_view: &gtk::TextView) -> gtk::Box {
+fn build_editor(ui: &Rc<DriftUi>) -> gtk::Box {
     let editor = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(12)
@@ -704,10 +801,42 @@ fn build_editor(ui: &Rc<DriftUi>, body_view: &gtk::TextView) -> gtk::Box {
     let title_entry = ui.title_entry.clone();
     title_entry.add_css_class("title-2");
 
+    let canvas_grid = gtk::DrawingArea::new();
+    canvas_grid.set_content_width(block_layout::CANVAS_WIDTH);
+    canvas_grid.set_content_height(block_layout::CANVAS_HEIGHT);
+    canvas_grid.set_draw_func(|_, cr, width, height| {
+        cr.set_source_rgb(0.12, 0.12, 0.12);
+        let _ = cr.paint();
+
+        cr.set_source_rgba(1.0, 1.0, 1.0, 0.06);
+        cr.set_line_width(1.0);
+
+        let grid = block_layout::GRID_SIZE as usize;
+        for x in (0..width).step_by(grid) {
+            cr.move_to(x as f64, 0.0);
+            cr.line_to(x as f64, height as f64);
+        }
+
+        for y in (0..height).step_by(grid) {
+            cr.move_to(0.0, y as f64);
+            cr.line_to(width as f64, y as f64);
+        }
+
+        let _ = cr.stroke();
+    });
+
+    let canvas_overlay = gtk::Overlay::new();
+    canvas_overlay.set_child(Some(&canvas_grid));
+    canvas_overlay.add_overlay(&ui.body_canvas_fixed);
+    canvas_overlay.set_size_request(block_layout::CANVAS_WIDTH, block_layout::CANVAS_HEIGHT);
+
+    ui.body_canvas_fixed.put(&ui.text_block_frame, 0.0, 0.0);
+    ui.apply_canvas_layout();
+
     let body_scroller = gtk::ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
-        .child(body_view)
+        .child(&canvas_overlay)
         .build();
 
     editor.append(&page_title);
@@ -757,6 +886,94 @@ fn connect_actions(
             ui.mark_dirty();
             ui.schedule_autosave();
         });
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        let drag_handle = ui.text_block_drag_handle.clone();
+        let gesture = gtk::GestureDrag::new();
+        let drag_origin = Rc::new(RefCell::new(None::<block_layout::TextBlockLayout>));
+
+        {
+            let ui = Rc::clone(&ui);
+            let drag_origin = Rc::clone(&drag_origin);
+            gesture.connect_drag_begin(move |_, _, _| {
+                drag_origin.replace(Some(ui.canvas_layout.borrow().text_block.clone()));
+            });
+        }
+
+        {
+            let ui = Rc::clone(&ui);
+            let drag_origin = Rc::clone(&drag_origin);
+            gesture.connect_drag_update(move |_, offset_x, offset_y| {
+                let Some(origin) = drag_origin.borrow().clone() else {
+                    return;
+                };
+
+                ui.update_text_block_layout(block_layout::TextBlockLayout {
+                    x: origin.x + offset_x.round() as i32,
+                    y: origin.y + offset_y.round() as i32,
+                    width: origin.width,
+                    height: origin.height,
+                });
+            });
+        }
+
+        {
+            let ui = Rc::clone(&ui);
+            gesture.connect_drag_end(move |_, _, _| {
+                ui.mark_dirty();
+                if let Err(error) = ui.save_immediately("Block position saved") {
+                    ui.set_status(&format!("Layout save failed: {error}"));
+                }
+            });
+        }
+
+        drag_handle.add_controller(gesture);
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        let resize_handle = ui.text_block_resize_handle.clone();
+        let gesture = gtk::GestureDrag::new();
+        let resize_origin = Rc::new(RefCell::new(None::<block_layout::TextBlockLayout>));
+
+        {
+            let ui = Rc::clone(&ui);
+            let resize_origin = Rc::clone(&resize_origin);
+            gesture.connect_drag_begin(move |_, _, _| {
+                resize_origin.replace(Some(ui.canvas_layout.borrow().text_block.clone()));
+            });
+        }
+
+        {
+            let ui = Rc::clone(&ui);
+            let resize_origin = Rc::clone(&resize_origin);
+            gesture.connect_drag_update(move |_, offset_x, offset_y| {
+                let Some(origin) = resize_origin.borrow().clone() else {
+                    return;
+                };
+
+                ui.update_text_block_layout(block_layout::TextBlockLayout {
+                    x: origin.x,
+                    y: origin.y,
+                    width: origin.width + offset_x.round() as i32,
+                    height: origin.height + offset_y.round() as i32,
+                });
+            });
+        }
+
+        {
+            let ui = Rc::clone(&ui);
+            gesture.connect_drag_end(move |_, _, _| {
+                ui.mark_dirty();
+                if let Err(error) = ui.save_immediately("Block size saved") {
+                    ui.set_status(&format!("Layout save failed: {error}"));
+                }
+            });
+        }
+
+        resize_handle.add_controller(gesture);
     }
 
     {
