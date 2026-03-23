@@ -1212,12 +1212,13 @@ fn build_editor(ui: &Rc<DriftUi>) -> gtk::Box {
 
     {
         let ui = Rc::clone(ui);
+        let ui_for_click = Rc::clone(&ui);
         let insert_popover = insert_popover.clone();
         let insert_position = Rc::clone(&insert_position);
         let click = gtk::GestureClick::new();
         click.set_button(1);
         click.connect_pressed(move |_, _, x, y| {
-            if ui.point_hits_text_block(x, y) {
+            if ui_for_click.point_hits_text_block(x, y) {
                 insert_popover.popdown();
                 return;
             }
