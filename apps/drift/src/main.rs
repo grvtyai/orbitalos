@@ -1538,11 +1538,80 @@ fn build_editor(ui: &Rc<DriftUi>) -> gtk::Box {
 
     {
         let ui = Rc::clone(ui);
+        let ui_for_pan = Rc::clone(&ui);
+        let scroller = body_scroller.clone();
+        let drag = gtk::GestureDrag::new();
+        let pan_origin = Rc::new(RefCell::new(None::<(f64, f64)>));
+        let pan_active = Rc::new(Cell::new(false));
+
+        drag.set_button(1);
+
+        {
+            let pan_origin = Rc::clone(&pan_origin);
+            let pan_active = Rc::clone(&pan_active);
+            let scroller = scroller.clone();
+            drag.connect_drag_begin(move |_, start_x, start_y| {
+                if ui_for_pan.point_hits_any_block(start_x, start_y) {
+                    pan_active.set(false);
+                    return;
+                }
+
+                let hadjustment = scroller.hadjustment();
+                let vadjustment = scroller.vadjustment();
+                pan_origin.replace(Some((hadjustment.value(), vadjustment.value())));
+                pan_active.set(true);
+            });
+        }
+
+        {
+            let pan_origin = Rc::clone(&pan_origin);
+            let pan_active = Rc::clone(&pan_active);
+            let scroller = scroller.clone();
+            drag.connect_drag_update(move |_, offset_x, offset_y| {
+                if !pan_active.get() {
+                    return;
+                }
+
+                let Some((start_h, start_v)) = *pan_origin.borrow() else {
+                    return;
+                };
+
+                let hadjustment = scroller.hadjustment();
+                let vadjustment = scroller.vadjustment();
+
+                let target_h = (start_h - offset_x).clamp(
+                    hadjustment.lower(),
+                    hadjustment.upper() - hadjustment.page_size(),
+                );
+                let target_v = (start_v - offset_y).clamp(
+                    vadjustment.lower(),
+                    vadjustment.upper() - vadjustment.page_size(),
+                );
+
+                hadjustment.set_value(target_h);
+                vadjustment.set_value(target_v);
+            });
+        }
+
+        {
+            let pan_origin = Rc::clone(&pan_origin);
+            let pan_active = Rc::clone(&pan_active);
+            drag.connect_drag_end(move |_, _, _| {
+                pan_origin.replace(None);
+                pan_active.set(false);
+            });
+        }
+
+        ui.body_canvas_fixed.add_controller(drag);
+    }
+
+    {
+        let ui = Rc::clone(ui);
         let ui_for_click = Rc::clone(&ui);
         let insert_popover = insert_popover.clone();
         let insert_position = Rc::clone(&insert_position);
         let click = gtk::GestureClick::new();
-        click.set_button(1);
+        click.set_button(3);
         click.connect_pressed(move |_, _, x, y| {
             if ui_for_click.point_hits_any_block(x, y) {
                 insert_popover.popdown();
