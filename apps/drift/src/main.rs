@@ -2822,10 +2822,11 @@ fn build_note_row(ui: &Rc<DriftUi>, note: &NoteSummary, collapsed: bool) -> gtk:
 
     {
         let menu_popover = menu_popover.clone();
+        let row_for_menu = row.clone();
         let right_click = gtk::GestureClick::new();
         right_click.set_button(3);
         right_click.connect_pressed(move |_, _, x, y| {
-            let allocation = row.allocation();
+            let allocation = row_for_menu.allocation();
             menu_popover
                 .set_pointing_to(Some(&gtk::gdk::Rectangle::new(
                     allocation.x() + x as i32,
