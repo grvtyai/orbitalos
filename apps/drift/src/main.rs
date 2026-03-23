@@ -20,6 +20,8 @@ const BLOCK_CHROME_TOP: i32 = 28;
 const BLOCK_CHROME_BOTTOM: i32 = 24;
 const MAX_UNDO_STEPS: usize = 100;
 const MAX_HISTORY_STEPS: usize = 100;
+const SIDEBAR_EXPANDED_WIDTH: i32 = 320;
+const SIDEBAR_COLLAPSED_WIDTH: i32 = 176;
 
 fn main() {
     adw::init().expect("Failed to initialize Libadwaita");
@@ -1898,7 +1900,7 @@ fn build_sidebar(ui: &Rc<DriftUi>) -> gtk::Box {
         .margin_bottom(16)
         .margin_start(16)
         .margin_end(16)
-        .width_request(320)
+        .width_request(SIDEBAR_EXPANDED_WIDTH)
         .build();
 
     let notebook_title = gtk::Label::builder()
@@ -1922,14 +1924,63 @@ fn build_sidebar(ui: &Rc<DriftUi>) -> gtk::Box {
     notebook_frame.add_css_class("card");
     notebook_frame.set_halign(gtk::Align::Start);
 
+    let toggle_button = gtk::Button::builder()
+        .icon_name("go-previous-symbolic")
+        .tooltip_text("Collapse sidebar")
+        .build();
+    toggle_button.add_css_class("header-action");
+
+    let header_spacer = gtk::Box::builder().hexpand(true).build();
+    let header_row = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(8)
+        .build();
+    header_row.append(&notebook_frame);
+    header_row.append(&header_spacer);
+    header_row.append(&toggle_button);
+
     let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
         .child(&ui.list_box)
         .build();
 
-    sidebar.append(&notebook_frame);
-    sidebar.append(&scroller);
+    let list_revealer = gtk::Revealer::builder()
+        .reveal_child(true)
+        .transition_type(gtk::RevealerTransitionType::SlideUp)
+        .build();
+    list_revealer.set_child(Some(&scroller));
+
+    {
+        let sidebar = sidebar.clone();
+        let list_revealer = list_revealer.clone();
+        let toggle_button = toggle_button.clone();
+        let collapsed = Rc::new(Cell::new(false));
+        let collapsed_state = Rc::clone(&collapsed);
+
+        toggle_button.connect_clicked(move |_| {
+            let next_collapsed = !collapsed_state.get();
+            collapsed_state.set(next_collapsed);
+
+            list_revealer.set_reveal_child(!next_collapsed);
+            sidebar.set_width_request(if next_collapsed {
+                SIDEBAR_COLLAPSED_WIDTH
+            } else {
+                SIDEBAR_EXPANDED_WIDTH
+            });
+
+            if next_collapsed {
+                toggle_button.set_icon_name("go-next-symbolic");
+                toggle_button.set_tooltip_text(Some("Expand sidebar"));
+            } else {
+                toggle_button.set_icon_name("go-previous-symbolic");
+                toggle_button.set_tooltip_text(Some("Collapse sidebar"));
+            }
+        });
+    }
+
+    sidebar.append(&header_row);
+    sidebar.append(&list_revealer);
     sidebar
 }
 
