@@ -606,6 +606,7 @@ impl DriftUi {
             .set_size_request(layout.width, layout.height + BLOCK_CHROME_TOP + BLOCK_CHROME_BOTTOM);
         widget.editor_frame.set_size_request(layout.width, layout.height);
         widget.drag_handle.set_size_request(layout.width, BLOCK_CHROME_TOP);
+        widget.resize_handle.set_size_request(72, -1);
         widget
             .frame
             .move_(&widget.drag_handle, 0.0, 0.0);
@@ -614,7 +615,7 @@ impl DriftUi {
             .move_(&widget.editor_frame, 0.0, BLOCK_CHROME_TOP as f64);
         widget.frame.move_(
             &widget.resize_handle,
-            0.0,
+            (layout.width - 78).max(0) as f64,
             (BLOCK_CHROME_TOP + layout.height) as f64,
         );
         self.body_canvas_fixed.move_(
@@ -1733,11 +1734,16 @@ fn install_app_styles() {
         .drift-window.theme-dark .drift-editor-surface,
         .drift-window.theme-dark .drift-note-block,
         .drift-window.theme-dark .drift-chip,
-        .drift-window.theme-dark .drift-popover {
+        .drift-window.theme-dark .drift-popover-menu {
             background: rgba(42, 26, 92, 0.96);
             color: #f7f1ff;
             border: 1px solid alpha(#a37cff, 0.22);
             box-shadow: 0 10px 30px alpha(#000000, 0.16);
+        }
+
+        .drift-window.theme-dark.drift-settings-window {
+            border: 1px solid alpha(#d7c4ff, 0.36);
+            box-shadow: 0 16px 34px alpha(#000000, 0.22);
         }
 
         .drift-window.theme-dark .drift-page-title,
@@ -1810,7 +1816,7 @@ fn install_app_styles() {
         .drift-window.theme-light .drift-editor-surface,
         .drift-window.theme-light .drift-note-block,
         .drift-window.theme-light .drift-chip,
-        .drift-window.theme-light .drift-popover {
+        .drift-window.theme-light .drift-popover-menu {
             background: rgba(255, 252, 255, 0.98);
             color: #7a5cc5;
             border: 1px solid alpha(#ceb4ff, 0.46);
@@ -1851,6 +1857,13 @@ fn install_app_styles() {
             background: linear-gradient(to right, #8f42e6, #6b2fd4);
             color: #fff9ff;
         }
+
+        .drift-popover {
+            background: transparent;
+            border: none;
+            box-shadow: none;
+            padding: 0;
+        }
         ",
     );
 
@@ -1875,6 +1888,7 @@ fn build_settings_window(
         .default_height(560)
         .build();
     window.add_css_class("drift-window");
+    window.add_css_class("drift-settings-window");
     apply_theme_classes(&window, ui.settings.borrow().theme_mode);
 
     let general_page = adw::PreferencesPage::builder()
@@ -3003,6 +3017,7 @@ fn build_note_row(ui: &Rc<DriftUi>, note: &NoteSummary, collapsed: bool) -> gtk:
         .margin_start(8)
         .margin_end(8)
         .build();
+    menu_box.add_css_class("drift-popover-menu");
 
     let rename_button = gtk::Button::with_label("Rename");
     let create_subpage_button = gtk::Button::with_label("Create SubPage");
