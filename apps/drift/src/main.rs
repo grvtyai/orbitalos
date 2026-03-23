@@ -662,9 +662,8 @@ fn build_window(
         .build();
     header_title.add_css_class("title-3");
 
-    let header_logo = gtk::Picture::for_filename(drift_logo_path());
-    header_logo.set_content_fit(gtk::ContentFit::Contain);
-    header_logo.set_can_shrink(true);
+    let header_logo = gtk::Image::from_file(drift_logo_path());
+    header_logo.set_pixel_size(22);
     header_logo.set_size_request(22, 22);
 
     let brand_box = gtk::Box::builder()
