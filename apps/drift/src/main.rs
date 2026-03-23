@@ -1620,6 +1620,14 @@ fn install_app_styles() {
             border-radius: 999px;
             background: alpha(currentColor, 0.22);
         }
+
+        row:drop(active),
+        row:drop(active):hover,
+        row:drop(active):selected {
+            background: transparent;
+            box-shadow: none;
+            outline: none;
+        }
         ",
     );
 
@@ -2664,7 +2672,7 @@ fn build_note_row(ui: &Rc<DriftUi>, note: &NoteSummary, collapsed: bool) -> gtk:
     }
 
     let drag_handle = gtk::Button::builder()
-        .icon_name("view-list-symbolic")
+        .icon_name("list-drag-handle-symbolic")
         .tooltip_text("Reorder page")
         .build();
     drag_handle.add_css_class("flat");
