@@ -140,7 +140,10 @@ impl DriftUi {
         let initial_layout = block_layout::default_note_canvas_layout(app_settings.grid_size());
         let database = OrbitalDatabase::open(&paths)?;
 
-        let new_button = gtk::Button::builder().label("New Page").build();
+        let new_button = gtk::Button::builder()
+            .icon_name("document-new-symbolic")
+            .tooltip_text("New Page")
+            .build();
         let undo_button = gtk::Button::builder()
             .icon_name("edit-undo-symbolic")
             .tooltip_text("Undo")
@@ -149,7 +152,10 @@ impl DriftUi {
             .icon_name("edit-redo-symbolic")
             .tooltip_text("Redo")
             .build();
-        let edit_button = gtk::ToggleButton::builder().label("Edit").build();
+        let edit_button = gtk::ToggleButton::builder()
+            .icon_name("document-edit-symbolic")
+            .tooltip_text("Edit")
+            .build();
         new_button.add_css_class("header-action");
         undo_button.add_css_class("header-action");
         redo_button.add_css_class("header-action");
