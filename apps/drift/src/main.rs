@@ -1736,11 +1736,11 @@ fn build_formatting_toolbar(ui: &Rc<DriftUi>) -> gtk::Box {
     color_combo.append(Some("orange"), "Orange");
     color_combo.set_active_id(Some("default"));
 
-    bold_button.set_child(Some(&styled_toolbar_label("<b>Bold</b>")));
-    italic_button.set_child(Some(&styled_toolbar_label("<i>Italic</i>")));
-    underline_button.set_child(Some(&styled_toolbar_label("<u>Underline</u>")));
+    bold_button.set_child(Some(&styled_toolbar_label("<b>B</b>")));
+    italic_button.set_child(Some(&styled_toolbar_label("<i>I</i>")));
+    underline_button.set_child(Some(&styled_toolbar_label("<u>U</u>")));
     strike_button.set_child(Some(&styled_toolbar_label(
-        "<span strikethrough=\"true\">Strike</span>",
+        "<span strikethrough=\"true\">S</span>",
     )));
 
     connect_style_toggle(&bold_button, ui, |ui, active| {
@@ -1907,12 +1907,20 @@ fn build_sidebar(ui: &Rc<DriftUi>) -> gtk::Box {
         .build();
     notebook_title.add_css_class("title-4");
 
-    let notebook_hint = gtk::Label::builder()
-        .label("One local notebook for all pages")
-        .xalign(0.0)
-        .wrap(true)
+    let notebook_box = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(0)
+        .margin_top(4)
+        .margin_bottom(4)
+        .margin_start(10)
+        .margin_end(10)
         .build();
-    notebook_hint.add_css_class("dim-label");
+    notebook_box.append(&notebook_title);
+
+    let notebook_frame = gtk::Frame::new(None);
+    notebook_frame.set_child(Some(&notebook_box));
+    notebook_frame.add_css_class("card");
+    notebook_frame.set_halign(gtk::Align::Start);
 
     let scroller = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
@@ -1920,8 +1928,7 @@ fn build_sidebar(ui: &Rc<DriftUi>) -> gtk::Box {
         .child(&ui.list_box)
         .build();
 
-    sidebar.append(&notebook_title);
-    sidebar.append(&notebook_hint);
+    sidebar.append(&notebook_frame);
     sidebar.append(&scroller);
     sidebar
 }

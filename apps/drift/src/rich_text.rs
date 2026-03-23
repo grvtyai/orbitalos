@@ -180,7 +180,9 @@ pub enum ParagraphStyle {
 }
 
 pub fn set_paragraph_style(buffer: &TextBuffer, style: ParagraphStyle) -> bool {
-    let (start, end) = selected_or_current_line_bounds(buffer);
+    let Some((start, end)) = selected_or_cursor_line_end_bounds(buffer) else {
+        return false;
+    };
 
     buffer.remove_tag_by_name(TAG_HEADING_1, &start, &end);
 
@@ -427,19 +429,25 @@ fn style_at_iter(buffer: &TextBuffer, iter: &gtk::TextIter) -> TextStyle {
     style
 }
 
-fn selected_or_current_line_bounds(buffer: &TextBuffer) -> (gtk::TextIter, gtk::TextIter) {
-    if let Some((mut start, mut end)) = buffer.selection_bounds() {
-        start.set_line_offset(0);
+fn selected_or_cursor_line_end_bounds(buffer: &TextBuffer) -> Option<(gtk::TextIter, gtk::TextIter)> {
+    if let Some((start, end)) = buffer.selection_bounds() {
+        if start == end {
+            None
+        } else {
+            Some((start, end))
+        }
+    } else {
+        let insert_mark = buffer.get_insert();
+        let start = buffer.iter_at_mark(&insert_mark);
+        let mut end = start;
         if !end.ends_line() {
             end.forward_to_line_end();
         }
-        (start, end)
-    } else {
-        let insert_mark = buffer.get_insert();
-        let mut start = buffer.iter_at_mark(&insert_mark);
-        start.set_line_offset(0);
-        let mut end = start;
-        end.forward_to_line_end();
-        (start, end)
+
+        if start == end {
+            None
+        } else {
+            Some((start, end))
+        }
     }
 }
