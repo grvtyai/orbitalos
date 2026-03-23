@@ -2680,13 +2680,14 @@ fn build_note_row(ui: &Rc<DriftUi>, note: &NoteSummary, collapsed: bool) -> gtk:
     {
         let drag_handle = drag_handle.clone();
         let hover = gtk::EventControllerMotion::new();
+        let drag_handle_enter = drag_handle.clone();
         hover.connect_enter(move |_, _, _| {
-            drag_handle.set_opacity(1.0);
+            drag_handle_enter.set_opacity(1.0);
         });
 
-        let drag_handle = drag_handle.clone();
+        let drag_handle_leave = drag_handle.clone();
         hover.connect_leave(move |_| {
-            drag_handle.set_opacity(0.0);
+            drag_handle_leave.set_opacity(0.0);
         });
         row.add_controller(hover);
     }
@@ -2804,12 +2805,13 @@ fn build_note_row(ui: &Rc<DriftUi>, note: &NoteSummary, collapsed: bool) -> gtk:
         let row = row.clone();
         let target_id = note.id.clone();
         let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
+        let row_for_drop = row.clone();
         drop_target.connect_drop(move |_, value, _, y| {
             let Ok(source_id) = value.get::<String>() else {
                 return false;
             };
 
-            let place_after = y > (row.allocation().height() as f64 / 2.0);
+            let place_after = y > (row_for_drop.allocation().height() as f64 / 2.0);
             let source_id = NoteId::new(source_id);
 
             if let Err(error) = ui.reorder_page(&source_id, &target_id, place_after) {
