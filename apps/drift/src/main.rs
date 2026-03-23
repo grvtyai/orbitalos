@@ -574,6 +574,49 @@ impl DriftUi {
         self.set_status("Grid setting updated");
     }
 
+    fn current_text_block_layout(&self) -> block_layout::TextBlockLayout {
+        self.preview_layout
+            .borrow()
+            .clone()
+            .unwrap_or_else(|| self.canvas_layout.borrow().text_block.clone())
+            .clamp_to_canvas(self.grid_size())
+    }
+
+    fn point_hits_text_block(&self, x: f64, y: f64) -> bool {
+        let layout = self.current_text_block_layout();
+        let x = x.round() as i32;
+        let y = y.round() as i32;
+
+        x >= layout.x
+            && x <= layout.x + layout.width
+            && y >= layout.y
+            && y <= layout.y + layout.height
+    }
+
+    fn create_text_block_at(&self, x: i32, y: i32) -> orbital_core::OrbitalResult<()> {
+        let grid_size = self.grid_size();
+        let width = grid_size * 44;
+        let height = grid_size * 28;
+
+        let layout = block_layout::TextBlockLayout {
+            x,
+            y,
+            width,
+            height,
+        }
+        .snapped_to_grid(grid_size)
+        .clamp_to_canvas(grid_size);
+
+        self.preview_layout.borrow_mut().take();
+        self.text_block_preview_frame.set_visible(false);
+        self.text_block_frame.set_opacity(1.0);
+        self.text_block_interacting.set(false);
+        self.canvas_layout.borrow_mut().text_block = layout;
+        self.apply_canvas_layout();
+        self.mark_dirty();
+        self.save_immediately("Text block created")
+    }
+
     fn schedule_autosave(self: &Rc<Self>) {
         if self.loading_ui.get() || self.selected_note_id.borrow().is_none() {
             return;
@@ -663,18 +706,26 @@ fn build_window(
     header_title.add_css_class("title-3");
 
     let header_logo = gtk::Image::from_file(drift_logo_path());
-    header_logo.set_pixel_size(48);
-    header_logo.set_size_request(48, 48);
+    header_logo.set_pixel_size(42);
+    header_logo.set_size_request(42, 42);
 
     let brand_box = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(8)
-        .margin_end(14)
+        .margin_top(4)
+        .margin_bottom(4)
+        .margin_start(8)
+        .margin_end(12)
         .build();
     brand_box.append(&header_logo);
     brand_box.append(&header_title);
 
-    header_bar.pack_start(&brand_box);
+    let brand_frame = gtk::Frame::new(None);
+    brand_frame.set_child(Some(&brand_box));
+    brand_frame.add_css_class("card");
+    brand_frame.set_margin_end(14);
+
+    header_bar.pack_start(&brand_frame);
     header_bar.pack_start(new_button);
     header_bar.pack_start(edit_button);
     header_bar.pack_end(settings_button);
@@ -1091,9 +1142,96 @@ fn build_editor(ui: &Rc<DriftUi>) -> gtk::Box {
     canvas_overlay.add_overlay(&ui.body_canvas_fixed);
     canvas_overlay.set_size_request(block_layout::CANVAS_WIDTH, block_layout::CANVAS_HEIGHT);
 
+    let insert_popover = gtk::Popover::new();
+    insert_popover.set_parent(&canvas_overlay);
+    insert_popover.set_has_arrow(true);
+    insert_popover.set_autohide(true);
+    insert_popover.set_position(gtk::PositionType::Bottom);
+
+    let insert_menu = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(4)
+        .margin_top(8)
+        .margin_bottom(8)
+        .margin_start(8)
+        .margin_end(8)
+        .build();
+
+    let text_block_button = gtk::Button::with_label("Textblock");
+    let image_block_button = gtk::Button::with_label("Bild");
+    let code_block_button = gtk::Button::with_label("Code");
+    image_block_button.set_sensitive(false);
+    code_block_button.set_sensitive(false);
+
+    insert_menu.append(&text_block_button);
+    insert_menu.append(&image_block_button);
+    insert_menu.append(&code_block_button);
+    insert_popover.set_child(Some(&insert_menu));
+
+    let insert_position = Rc::new(RefCell::new((0_i32, 0_i32)));
+
     ui.body_canvas_fixed.put(&ui.text_block_frame, 0.0, 0.0);
     ui.body_canvas_fixed.put(&ui.text_block_preview_frame, 0.0, 0.0);
     ui.apply_canvas_layout();
+
+    {
+        let ui = Rc::clone(ui);
+        let insert_popover = insert_popover.clone();
+        let insert_position = Rc::clone(&insert_position);
+        text_block_button.connect_clicked(move |_| {
+            let (x, y) = *insert_position.borrow();
+            if let Err(error) = ui.create_text_block_at(x, y) {
+                ui.set_status(&format!("Create block failed: {error}"));
+            }
+            insert_popover.popdown();
+        });
+    }
+
+    {
+        let ui_for_motion = Rc::clone(ui);
+        let canvas_surface = ui.body_canvas_fixed.clone();
+        let motion = gtk::EventControllerMotion::new();
+        motion.connect_motion(move |controller, x, y| {
+            let cursor_name = if ui_for_motion.point_hits_text_block(x, y) {
+                None
+            } else {
+                Some("crosshair")
+            };
+
+            let _ = controller;
+            canvas_surface.set_cursor_from_name(cursor_name);
+        });
+
+        let canvas_surface = ui.body_canvas_fixed.clone();
+        motion.connect_leave(move |_| {
+            canvas_surface.set_cursor_from_name(None);
+        });
+
+        ui.body_canvas_fixed.add_controller(motion);
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        let insert_popover = insert_popover.clone();
+        let insert_position = Rc::clone(&insert_position);
+        let click = gtk::GestureClick::new();
+        click.set_button(1);
+        click.connect_pressed(move |_, _, x, y| {
+            if ui.point_hits_text_block(x, y) {
+                insert_popover.popdown();
+                return;
+            }
+
+            let point_x = x.round() as i32;
+            let point_y = y.round() as i32;
+            insert_position.replace((point_x, point_y));
+            insert_popover
+                .set_pointing_to(Some(&gtk::gdk::Rectangle::new(point_x, point_y, 1, 1)));
+            insert_popover.popup();
+        });
+
+        ui.body_canvas_fixed.add_controller(click);
+    }
 
     let body_scroller = gtk::ScrolledWindow::builder()
         .hexpand(true)
