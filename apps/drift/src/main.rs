@@ -663,8 +663,8 @@ fn build_window(
     header_title.add_css_class("title-3");
 
     let header_logo = gtk::Image::from_file(drift_logo_path());
-    header_logo.set_pixel_size(28);
-    header_logo.set_size_request(28, 28);
+    header_logo.set_pixel_size(36);
+    header_logo.set_size_request(36, 36);
 
     let brand_box = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
@@ -678,6 +678,7 @@ fn build_window(
     header_bar.pack_start(new_button);
     header_bar.pack_start(edit_button);
     header_bar.pack_end(settings_button);
+    header_bar.set_title_widget(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
 
     let content = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
