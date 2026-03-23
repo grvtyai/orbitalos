@@ -547,18 +547,29 @@ impl DriftUi {
     }
 
     fn clear_list_box(&self) {
-        let mut children = Vec::new();
+        let mut rows = Vec::new();
+        let mut popovers = Vec::new();
         let mut current = self.list_box.first_child();
 
         while let Some(child) = current {
             let next = child.next_sibling();
-            children.push(child);
+            if let Ok(row) = child.clone().downcast::<gtk::ListBoxRow>() {
+                rows.push(row);
+            } else if let Ok(popover) = child.clone().downcast::<gtk::Popover>() {
+                popovers.push(popover);
+            }
             current = next;
         }
 
-        for child in children {
-            if child.parent().as_ref() == Some(self.list_box.upcast_ref()) {
-                self.list_box.remove(&child);
+        for popover in popovers {
+            if popover.parent().as_ref() == Some(self.list_box.upcast_ref()) {
+                popover.unparent();
+            }
+        }
+
+        for row in rows {
+            if row.parent().as_ref() == Some(self.list_box.upcast_ref()) {
+                self.list_box.remove(&row);
             }
         }
     }
