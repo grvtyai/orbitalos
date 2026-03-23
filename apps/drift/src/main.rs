@@ -1500,6 +1500,12 @@ fn build_editor(ui: &Rc<DriftUi>) -> gtk::Box {
     ui.body_canvas_fixed.put(&ui.text_block_preview_frame, 0.0, 0.0);
     ui.apply_canvas_layout();
 
+    let body_scroller = gtk::ScrolledWindow::builder()
+        .hexpand(true)
+        .vexpand(true)
+        .child(&canvas_overlay)
+        .build();
+
     {
         let ui = Rc::clone(ui);
         let insert_popover = insert_popover.clone();
@@ -1628,12 +1634,6 @@ fn build_editor(ui: &Rc<DriftUi>) -> gtk::Box {
 
         ui.body_canvas_fixed.add_controller(click);
     }
-
-    let body_scroller = gtk::ScrolledWindow::builder()
-        .hexpand(true)
-        .vexpand(true)
-        .child(&canvas_overlay)
-        .build();
 
     editor.append(&page_title);
     editor.append(&title_entry);
