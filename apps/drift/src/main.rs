@@ -822,6 +822,7 @@ fn build_text_block_widget(
     drag_handle.append(&block_title);
     drag_handle.append(&block_hint);
     drag_handle.set_opacity(0.0);
+    drag_handle.add_css_class("card");
 
     let resize_handle = gtk::Label::builder()
         .label("Resize")
@@ -831,6 +832,7 @@ fn build_text_block_widget(
         .margin_end(10)
         .build();
     resize_handle.add_css_class("dim-label");
+    resize_handle.add_css_class("card");
     resize_handle.set_opacity(0.0);
 
     let scroller = gtk::ScrolledWindow::builder()
