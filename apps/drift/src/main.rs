@@ -15,6 +15,8 @@ mod rich_text;
 mod settings;
 
 const AUTOSAVE_DELAY_MS: u64 = 900;
+const BLOCK_CHROME_TOP: i32 = 28;
+const BLOCK_CHROME_BOTTOM: i32 = 24;
 
 fn main() {
     adw::init().expect("Failed to initialize Libadwaita");
@@ -97,7 +99,8 @@ struct DriftUi {
 
 struct TextBlockWidget {
     id: String,
-    frame: gtk::Frame,
+    frame: gtk::Fixed,
+    editor_frame: gtk::Frame,
     drag_handle: gtk::Box,
     resize_handle: gtk::Label,
     buffer: gtk::TextBuffer,
@@ -435,11 +438,27 @@ impl DriftUi {
     }
 
     fn render_block_layout(&self, widget: &TextBlockWidget, layout: &block_layout::TextBlockLayout) {
-        widget.frame.set_size_request(layout.width, layout.height);
+        widget
+            .frame
+            .set_size_request(layout.width, layout.height + BLOCK_CHROME_TOP + BLOCK_CHROME_BOTTOM);
+        widget.editor_frame.set_size_request(layout.width, layout.height);
+        widget.drag_handle.set_size_request(layout.width, BLOCK_CHROME_TOP);
+        widget.resize_handle.set_size_request(layout.width, BLOCK_CHROME_BOTTOM);
+        widget
+            .frame
+            .move_(&widget.drag_handle, 0.0, 0.0);
+        widget
+            .frame
+            .move_(&widget.editor_frame, 0.0, BLOCK_CHROME_TOP as f64);
+        widget.frame.move_(
+            &widget.resize_handle,
+            0.0,
+            (BLOCK_CHROME_TOP + layout.height) as f64,
+        );
         self.body_canvas_fixed.move_(
             &widget.frame,
             layout.x as f64,
-            layout.y as f64,
+            (layout.y - BLOCK_CHROME_TOP) as f64,
         );
     }
 
@@ -594,8 +613,8 @@ impl DriftUi {
 
             x >= layout.x
                 && x <= layout.x + layout.width
-                && y >= layout.y
-                && y <= layout.y + layout.height
+                && y >= layout.y - BLOCK_CHROME_TOP
+                && y <= layout.y + layout.height + BLOCK_CHROME_BOTTOM
         })
     }
 
@@ -784,10 +803,8 @@ fn build_text_block_widget(
     let drag_handle = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(8)
-        .margin_top(8)
-        .margin_bottom(8)
-        .margin_start(12)
-        .margin_end(12)
+        .margin_start(4)
+        .margin_end(4)
         .build();
     drag_handle.add_css_class("toolbar");
 
@@ -798,7 +815,7 @@ fn build_text_block_widget(
         .build();
     block_title.add_css_class("heading");
     let block_hint = gtk::Label::builder()
-        .label("Drag here")
+        .label("Drag")
         .xalign(1.0)
         .build();
     block_hint.add_css_class("dim-label");
@@ -816,27 +833,30 @@ fn build_text_block_widget(
     resize_handle.add_css_class("dim-label");
     resize_handle.set_opacity(0.0);
 
-    let block_body = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(0)
-        .build();
     let scroller = gtk::ScrolledWindow::builder()
         .hexpand(true)
         .vexpand(true)
         .child(&view)
         .build();
-    block_body.append(&drag_handle);
-    block_body.append(&scroller);
-    block_body.append(&resize_handle);
+    let editor_frame = gtk::Frame::new(None);
+    editor_frame.set_child(Some(&scroller));
+    editor_frame.set_size_request(block.width, block.height);
+    editor_frame.add_css_class("card");
 
-    let frame = gtk::Frame::new(None);
-    frame.set_child(Some(&block_body));
-    frame.set_size_request(block.width, block.height);
-    frame.add_css_class("card");
+    let frame = gtk::Fixed::new();
+    frame.set_size_request(block.width, block.height + BLOCK_CHROME_TOP + BLOCK_CHROME_BOTTOM);
+    frame.put(&drag_handle, 0.0, 0.0);
+    frame.put(&editor_frame, 0.0, BLOCK_CHROME_TOP as f64);
+    frame.put(
+        &resize_handle,
+        0.0,
+        (BLOCK_CHROME_TOP + block.height) as f64,
+    );
 
     let widget = Rc::new(TextBlockWidget {
         id: block.id.clone(),
         frame,
+        editor_frame,
         drag_handle,
         resize_handle,
         buffer,
