@@ -1614,6 +1614,12 @@ fn install_app_styles() {
             background: alpha(currentColor, 0.09);
             border-color: alpha(currentColor, 0.22);
         }
+
+        .page-drop-indicator {
+            min-height: 3px;
+            border-radius: 999px;
+            background: alpha(currentColor, 0.22);
+        }
         ",
     );
 
@@ -2627,6 +2633,7 @@ fn capture_snapshot(buffer: &gtk::TextBuffer) -> EditorSnapshot {
 fn build_note_row(ui: &Rc<DriftUi>, note: &NoteSummary, collapsed: bool) -> gtk::ListBoxRow {
     let row = gtk::ListBoxRow::new();
     row.set_selectable(true);
+    row.set_activatable(true);
 
     let content = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
@@ -2675,7 +2682,29 @@ fn build_note_row(ui: &Rc<DriftUi>, note: &NoteSummary, collapsed: bool) -> gtk:
     row_layout.append(&content);
     row_layout.append(&row_spacer);
     row_layout.append(&drag_handle);
-    row.set_child(Some(&row_layout));
+
+    let top_indicator = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    top_indicator.set_height_request(3);
+    top_indicator.set_margin_start(10);
+    top_indicator.set_margin_end(10);
+    top_indicator.set_opacity(0.0);
+    top_indicator.add_css_class("page-drop-indicator");
+
+    let bottom_indicator = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    bottom_indicator.set_height_request(3);
+    bottom_indicator.set_margin_start(10);
+    bottom_indicator.set_margin_end(10);
+    bottom_indicator.set_opacity(0.0);
+    bottom_indicator.add_css_class("page-drop-indicator");
+
+    let row_wrapper = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(4)
+        .build();
+    row_wrapper.append(&top_indicator);
+    row_wrapper.append(&row_layout);
+    row_wrapper.append(&bottom_indicator);
+    row.set_child(Some(&row_wrapper));
 
     {
         let drag_handle = drag_handle.clone();
@@ -2689,7 +2718,7 @@ fn build_note_row(ui: &Rc<DriftUi>, note: &NoteSummary, collapsed: bool) -> gtk:
         hover.connect_leave(move |_| {
             drag_handle_leave.set_opacity(0.0);
         });
-        row.add_controller(hover);
+        row_wrapper.add_controller(hover);
     }
 
     let menu_popover = gtk::Popover::new();
@@ -2786,7 +2815,7 @@ fn build_note_row(ui: &Rc<DriftUi>, note: &NoteSummary, collapsed: bool) -> gtk:
                 .set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
             menu_popover.popup();
         });
-        row.add_controller(right_click);
+        row_wrapper.add_controller(right_click);
     }
 
     {
@@ -2802,17 +2831,43 @@ fn build_note_row(ui: &Rc<DriftUi>, note: &NoteSummary, collapsed: bool) -> gtk:
 
     {
         let ui = Rc::clone(ui);
-        let row = row.clone();
         let target_id = note.id.clone();
         let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
-        let row_for_drop = row.clone();
+        let row_layout_for_drop = row_layout.clone();
+        let top_indicator_for_motion = top_indicator.clone();
+        let bottom_indicator_for_motion = bottom_indicator.clone();
+        drop_target.connect_motion(move |_, _, y| {
+            let split = row_layout_for_drop.allocation().height() as f64 / 2.0;
+            if y <= split {
+                top_indicator_for_motion.set_opacity(1.0);
+                bottom_indicator_for_motion.set_opacity(0.0);
+            } else {
+                top_indicator_for_motion.set_opacity(0.0);
+                bottom_indicator_for_motion.set_opacity(1.0);
+            }
+
+            gtk::gdk::DragAction::MOVE
+        });
+
+        let top_indicator_for_leave = top_indicator.clone();
+        let bottom_indicator_for_leave = bottom_indicator.clone();
+        drop_target.connect_leave(move |_| {
+            top_indicator_for_leave.set_opacity(0.0);
+            bottom_indicator_for_leave.set_opacity(0.0);
+        });
+
+        let row_layout_for_drop = row_layout.clone();
+        let top_indicator_for_drop = top_indicator.clone();
+        let bottom_indicator_for_drop = bottom_indicator.clone();
         drop_target.connect_drop(move |_, value, _, y| {
             let Ok(source_id) = value.get::<String>() else {
                 return false;
             };
 
-            let place_after = y > (row_for_drop.allocation().height() as f64 / 2.0);
+            let place_after = y > (row_layout_for_drop.allocation().height() as f64 / 2.0);
             let source_id = NoteId::new(source_id);
+            top_indicator_for_drop.set_opacity(0.0);
+            bottom_indicator_for_drop.set_opacity(0.0);
 
             if let Err(error) = ui.reorder_page(&source_id, &target_id, place_after) {
                 ui.set_status(&format!("Reorder failed: {error}"));
@@ -2821,7 +2876,7 @@ fn build_note_row(ui: &Rc<DriftUi>, note: &NoteSummary, collapsed: bool) -> gtk:
 
             true
         });
-        row.add_controller(drop_target);
+        row_wrapper.add_controller(drop_target);
     }
 
     row
