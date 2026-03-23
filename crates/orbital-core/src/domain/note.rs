@@ -34,6 +34,7 @@ pub struct NewNote {
     pub body: String,
     pub body_markup: Option<String>,
     pub body_layout: Option<String>,
+    pub display_order: Option<i64>,
     pub tags: Vec<String>,
 }
 
@@ -45,6 +46,7 @@ impl NewNote {
             body: body.into(),
             body_markup: None,
             body_layout: None,
+            display_order: None,
             tags: Vec::new(),
         }
     }
@@ -56,6 +58,7 @@ pub struct NoteSummary {
     pub title: String,
     pub excerpt: String,
     pub tags: Vec<String>,
+    pub display_order: i64,
     pub created_at: i64,
     pub updated_at: i64,
     pub archived_at: Option<i64>,

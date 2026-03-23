@@ -16,11 +16,18 @@ impl<'connection> NoteRepository<'connection> {
 
     pub fn create(&self, note: NewNote) -> OrbitalResult<NoteDocument> {
         let now = current_unix_timestamp()?;
+        let display_order = match note.display_order {
+            Some(display_order) => {
+                self.shift_display_order_from(display_order)?;
+                display_order
+            }
+            None => self.next_display_order()?,
+        };
 
         self.connection.execute(
             "
-            INSERT INTO notes (id, title, body, body_markup, body_layout, created_at, updated_at, archived_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, NULL)
+            INSERT INTO notes (id, title, body, body_markup, body_layout, display_order, created_at, updated_at, archived_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, NULL)
             ",
             params![
                 note.id.as_str(),
@@ -28,6 +35,7 @@ impl<'connection> NoteRepository<'connection> {
                 note.body,
                 note.body_markup,
                 note.body_layout,
+                display_order,
                 now
             ],
         )?;
@@ -42,7 +50,7 @@ impl<'connection> NoteRepository<'connection> {
     pub fn get(&self, id: &NoteId) -> OrbitalResult<Option<NoteDocument>> {
         let mut statement = self.connection.prepare(
             "
-            SELECT id, title, body, body_markup, body_layout, created_at, updated_at, archived_at
+            SELECT id, title, body, body_markup, body_layout, display_order, created_at, updated_at, archived_at
             FROM notes
             WHERE id = ?1
             ",
@@ -58,18 +66,20 @@ impl<'connection> NoteRepository<'connection> {
                     row.get::<_, Option<String>>(4)?,
                     row.get::<_, i64>(5)?,
                     row.get::<_, i64>(6)?,
-                    row.get::<_, Option<i64>>(7)?,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, Option<i64>>(8)?,
                 ))
             })
             .optional()?;
 
-        note.map(|(id, title, body, body_markup, body_layout, created_at, updated_at, archived_at)| {
+        note.map(|(id, title, body, body_markup, body_layout, display_order, created_at, updated_at, archived_at)| {
             Ok(NoteDocument {
                 summary: NoteSummary {
                     excerpt: note_excerpt(&body),
                     tags: self.load_tags(&id)?,
                     id,
                     title,
+                    display_order,
                     created_at,
                     updated_at,
                     archived_at,
@@ -85,10 +95,10 @@ impl<'connection> NoteRepository<'connection> {
     pub fn list_active(&self) -> OrbitalResult<Vec<NoteSummary>> {
         let mut statement = self.connection.prepare(
             "
-            SELECT id, title, body, created_at, updated_at, archived_at
+            SELECT id, title, body, display_order, created_at, updated_at, archived_at
             FROM notes
             WHERE archived_at IS NULL
-            ORDER BY updated_at DESC, created_at DESC
+            ORDER BY display_order ASC, updated_at DESC, created_at DESC
             ",
         )?;
 
@@ -99,20 +109,22 @@ impl<'connection> NoteRepository<'connection> {
                 row.get::<_, String>(2)?,
                 row.get::<_, i64>(3)?,
                 row.get::<_, i64>(4)?,
-                row.get::<_, Option<i64>>(5)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, Option<i64>>(6)?,
             ))
         })?;
 
         let mut notes = Vec::new();
 
         for note_row in note_rows {
-            let (id, title, body, created_at, updated_at, archived_at) = note_row?;
+            let (id, title, body, display_order, created_at, updated_at, archived_at) = note_row?;
 
             notes.push(NoteSummary {
                 excerpt: note_excerpt(&body),
                 tags: self.load_tags(&id)?,
                 id,
                 title,
+                display_order,
                 created_at,
                 updated_at,
                 archived_at,
@@ -128,14 +140,15 @@ impl<'connection> NoteRepository<'connection> {
         let updated_rows = self.connection.execute(
             "
             UPDATE notes
-            SET title = ?1, body = ?2, body_markup = ?3, body_layout = ?4, updated_at = ?5, archived_at = ?6
-            WHERE id = ?7
+            SET title = ?1, body = ?2, body_markup = ?3, body_layout = ?4, display_order = ?5, updated_at = ?6, archived_at = ?7
+            WHERE id = ?8
             ",
             params![
                 note.summary.title.as_str(),
                 note.body.as_str(),
                 note.body_markup.as_deref(),
                 note.body_layout.as_deref(),
+                note.summary.display_order,
                 now,
                 note.summary.archived_at,
                 note.summary.id.as_str()
@@ -177,6 +190,74 @@ impl<'connection> NoteRepository<'connection> {
 
         self.record_change(id, "archived", now)?;
 
+        Ok(())
+    }
+
+    pub fn duplicate(&self, source_id: &NoteId, duplicate_id: NoteId) -> OrbitalResult<NoteDocument> {
+        let source = self
+            .get(source_id)?
+            .ok_or(OrbitalError::NotFound {
+                entity: NOTE_ENTITY_TYPE,
+                id: source_id.to_string(),
+            })?;
+
+        let mut duplicate = NewNote::new(
+            duplicate_id,
+            format!("{} Copy", source.summary.title),
+            source.body.clone(),
+        );
+        duplicate.body_markup = source.body_markup.clone();
+        duplicate.body_layout = source.body_layout.clone();
+        duplicate.tags = source.summary.tags.clone();
+        duplicate.display_order = Some(source.summary.display_order + 1);
+
+        self.create(duplicate)
+    }
+
+    pub fn reorder(&self, source_id: &NoteId, target_id: &NoteId, place_after: bool) -> OrbitalResult<()> {
+        if source_id == target_id {
+            return Ok(());
+        }
+
+        let mut notes = self.list_active()?;
+        let Some(source_index) = notes.iter().position(|note| &note.id == source_id) else {
+            return Err(OrbitalError::NotFound {
+                entity: NOTE_ENTITY_TYPE,
+                id: source_id.to_string(),
+            });
+        };
+        let Some(target_index) = notes.iter().position(|note| &note.id == target_id) else {
+            return Err(OrbitalError::NotFound {
+                entity: NOTE_ENTITY_TYPE,
+                id: target_id.to_string(),
+            });
+        };
+
+        let source_note = notes.remove(source_index);
+        let mut insert_index = if place_after {
+            target_index + 1
+        } else {
+            target_index
+        };
+
+        if source_index < insert_index {
+            insert_index -= 1;
+        }
+
+        notes.insert(insert_index, source_note);
+
+        for (index, note) in notes.iter().enumerate() {
+            self.connection.execute(
+                "
+                UPDATE notes
+                SET display_order = ?1
+                WHERE id = ?2
+                ",
+                params![index as i64 + 1, note.id.as_str()],
+            )?;
+        }
+
+        self.record_change(source_id, "reordered", current_unix_timestamp()?)?;
         Ok(())
     }
 
@@ -241,6 +322,32 @@ impl<'connection> NoteRepository<'connection> {
             VALUES (?1, ?2, ?3, ?4)
             ",
             params![NOTE_ENTITY_TYPE, id.as_str(), change_kind, changed_at],
+        )?;
+
+        Ok(())
+    }
+
+    fn next_display_order(&self) -> OrbitalResult<i64> {
+        let next = self.connection.query_row(
+            "
+            SELECT COALESCE(MAX(display_order), 0) + 1
+            FROM notes
+            ",
+            [],
+            |row| row.get(0),
+        )?;
+
+        Ok(next)
+    }
+
+    fn shift_display_order_from(&self, start_display_order: i64) -> OrbitalResult<()> {
+        self.connection.execute(
+            "
+            UPDATE notes
+            SET display_order = display_order + 1
+            WHERE display_order >= ?1
+            ",
+            params![start_display_order],
         )?;
 
         Ok(())

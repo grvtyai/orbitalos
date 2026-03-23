@@ -236,7 +236,7 @@ impl DriftUi {
             history_redo_stack: RefCell::new(Vec::new()),
             history_suspended: Cell::new(false),
             title_history_pending: Cell::new(true),
-            sidebar_collapsed: Cell::new(false),
+            sidebar_collapsed: Cell::new(true),
             bold_mode: Cell::new(false),
             italic_mode: Cell::new(false),
             underline_mode: Cell::new(false),
@@ -289,7 +289,7 @@ impl DriftUi {
 
         for note in &notes {
             self.list_box
-                .append(&build_note_row(note, self.sidebar_collapsed.get()));
+                .append(&build_note_row(self, note, self.sidebar_collapsed.get()));
         }
 
         let selected_index = selection.as_ref().and_then(|target| {
@@ -372,7 +372,7 @@ impl DriftUi {
         }))
     }
 
-    fn refresh_note_summaries(&self, preferred_note: Option<NoteId>) -> orbital_core::OrbitalResult<()> {
+    fn refresh_note_summaries(self: &Rc<Self>, preferred_note: Option<NoteId>) -> orbital_core::OrbitalResult<()> {
         let repository = self.repository();
         let notes = repository.list_active()?;
         let selection = preferred_note.or_else(|| self.selected_note_id.borrow().clone());
@@ -383,7 +383,7 @@ impl DriftUi {
 
         for note in &notes {
             self.list_box
-                .append(&build_note_row(note, self.sidebar_collapsed.get()));
+                .append(&build_note_row(self, note, self.sidebar_collapsed.get()));
         }
 
         if let Some(target) = selection {
@@ -422,6 +422,57 @@ impl DriftUi {
         self.populate_editor(&document);
         self.set_status("Page loaded");
 
+        Ok(())
+    }
+
+    fn begin_page_rename(self: &Rc<Self>, note_id: &NoteId) -> orbital_core::OrbitalResult<()> {
+        self.reload_notes(Some(note_id.clone()))?;
+        self.title_entry.grab_focus();
+        self.title_entry.select_region(0, -1);
+        self.set_status("Rename page");
+        Ok(())
+    }
+
+    fn duplicate_page(self: &Rc<Self>, note_id: &NoteId) -> orbital_core::OrbitalResult<()> {
+        self.record_history_checkpoint()?;
+        let duplicated = self.repository().duplicate(note_id, generate_note_id())?;
+        self.reload_notes(Some(duplicated.summary.id.clone()))?;
+        self.set_status("Page duplicated");
+        Ok(())
+    }
+
+    fn remove_page(self: &Rc<Self>, note_id: &NoteId) -> orbital_core::OrbitalResult<()> {
+        self.record_history_checkpoint()?;
+        let notes = self.notes.borrow().clone();
+        let fallback_selection = notes
+            .iter()
+            .position(|note| note.id == *note_id)
+            .and_then(|index| {
+                notes.get(index + 1)
+                    .or_else(|| index.checked_sub(1).and_then(|previous| notes.get(previous)))
+            })
+            .map(|note| note.id.clone());
+
+        self.repository().archive(note_id)?;
+        self.reload_notes(fallback_selection)?;
+        self.set_status("Page removed");
+        Ok(())
+    }
+
+    fn reorder_page(
+        self: &Rc<Self>,
+        source_id: &NoteId,
+        target_id: &NoteId,
+        place_after: bool,
+    ) -> orbital_core::OrbitalResult<()> {
+        if source_id == target_id {
+            return Ok(());
+        }
+
+        self.record_history_checkpoint()?;
+        self.repository().reorder(source_id, target_id, place_after)?;
+        self.reload_notes(Some(source_id.clone()))?;
+        self.set_status("Page order updated");
         Ok(())
     }
 
@@ -763,7 +814,7 @@ impl DriftUi {
     }
 
     fn apply_paragraph_style(
-        &self,
+        self: &Rc<Self>,
         style: rich_text::ParagraphStyle,
         success_message: &str,
     ) -> orbital_core::OrbitalResult<bool> {
@@ -781,7 +832,7 @@ impl DriftUi {
         Ok(changed)
     }
 
-    fn apply_checklist(&self) -> orbital_core::OrbitalResult<bool> {
+    fn apply_checklist(self: &Rc<Self>) -> orbital_core::OrbitalResult<bool> {
         let Some(buffer) = self.active_buffer() else {
             return Ok(false);
         };
@@ -860,7 +911,7 @@ impl DriftUi {
         }
     }
 
-    fn apply_inline_shortcut<F>(&self, action: F) -> orbital_core::OrbitalResult<bool>
+    fn apply_inline_shortcut<F>(self: &Rc<Self>, action: F) -> orbital_core::OrbitalResult<bool>
     where
         F: FnOnce(gtk::TextBuffer) -> bool,
     {
@@ -982,6 +1033,7 @@ impl DriftUi {
                     );
                     new_note.body_markup = note.body_markup.clone();
                     new_note.body_layout = note.body_layout.clone();
+                    new_note.display_order = Some(note.summary.display_order);
                     new_note.tags = note.summary.tags.clone();
                     repository.create(new_note)?;
                 }
@@ -1046,7 +1098,7 @@ impl DriftUi {
         }
     }
 
-    fn flush_autosave(&self) -> orbital_core::OrbitalResult<Option<NoteDocument>> {
+    fn flush_autosave(self: &Rc<Self>) -> orbital_core::OrbitalResult<Option<NoteDocument>> {
         self.cancel_autosave();
 
         if !self.dirty.get() {
@@ -1065,7 +1117,7 @@ impl DriftUi {
         }
     }
 
-    fn save_immediately(&self, success_message: &str) -> orbital_core::OrbitalResult<()> {
+    fn save_immediately(self: &Rc<Self>, success_message: &str) -> orbital_core::OrbitalResult<()> {
         self.cancel_autosave();
 
         let Some(saved) = self.persist_editor_to_database()? else {
@@ -1904,7 +1956,11 @@ fn build_sidebar(ui: &Rc<DriftUi>) -> gtk::Box {
         .margin_bottom(16)
         .margin_start(16)
         .margin_end(16)
-        .width_request(SIDEBAR_EXPANDED_WIDTH)
+        .width_request(if ui.sidebar_collapsed.get() {
+            SIDEBAR_COLLAPSED_WIDTH
+        } else {
+            SIDEBAR_EXPANDED_WIDTH
+        })
         .build();
     sidebar.set_hexpand(false);
     sidebar.set_halign(gtk::Align::Start);
@@ -1931,8 +1987,16 @@ fn build_sidebar(ui: &Rc<DriftUi>) -> gtk::Box {
     notebook_frame.set_halign(gtk::Align::Start);
 
     let toggle_button = gtk::Button::builder()
-        .icon_name("go-previous-symbolic")
-        .tooltip_text("Collapse sidebar")
+        .icon_name(if ui.sidebar_collapsed.get() {
+            "go-next-symbolic"
+        } else {
+            "go-previous-symbolic"
+        })
+        .tooltip_text(if ui.sidebar_collapsed.get() {
+            "Expand sidebar"
+        } else {
+            "Collapse sidebar"
+        })
         .build();
     toggle_button.add_css_class("header-action");
 
@@ -1952,7 +2016,11 @@ fn build_sidebar(ui: &Rc<DriftUi>) -> gtk::Box {
         .child(&ui.list_box)
         .build();
     scroller.set_hexpand(false);
-    scroller.set_min_content_width(SIDEBAR_EXPANDED_WIDTH - 32);
+    scroller.set_min_content_width(if ui.sidebar_collapsed.get() {
+        SIDEBAR_COLLAPSED_WIDTH - 32
+    } else {
+        SIDEBAR_EXPANDED_WIDTH - 32
+    });
 
     {
         let ui = Rc::clone(ui);
@@ -1960,7 +2028,7 @@ fn build_sidebar(ui: &Rc<DriftUi>) -> gtk::Box {
         let scroller = scroller.clone();
         let button_signal = toggle_button.clone();
         let button_state = toggle_button.clone();
-        let collapsed = Rc::new(Cell::new(false));
+        let collapsed = Rc::new(Cell::new(ui.sidebar_collapsed.get()));
         let collapsed_state = Rc::clone(&collapsed);
 
         button_signal.connect_clicked(move |_| {
@@ -2556,16 +2624,13 @@ fn capture_snapshot(buffer: &gtk::TextBuffer) -> EditorSnapshot {
     }
 }
 
-fn build_note_row(note: &NoteSummary, collapsed: bool) -> gtk::ListBoxRow {
+fn build_note_row(ui: &Rc<DriftUi>, note: &NoteSummary, collapsed: bool) -> gtk::ListBoxRow {
     let row = gtk::ListBoxRow::new();
+    row.set_selectable(true);
 
     let content = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(if collapsed { 0 } else { 6 })
-        .margin_top(if collapsed { 8 } else { 10 })
-        .margin_bottom(if collapsed { 8 } else { 10 })
-        .margin_start(10)
-        .margin_end(10)
         .build();
 
     let title = gtk::Label::builder()
@@ -2590,7 +2655,172 @@ fn build_note_row(note: &NoteSummary, collapsed: bool) -> gtk::ListBoxRow {
         subtitle.add_css_class("dim-label");
         content.append(&subtitle);
     }
-    row.set_child(Some(&content));
+
+    let drag_handle = gtk::Button::builder()
+        .icon_name("view-list-symbolic")
+        .tooltip_text("Reorder page")
+        .build();
+    drag_handle.add_css_class("flat");
+    drag_handle.set_opacity(0.0);
+
+    let row_layout = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(8)
+        .margin_top(if collapsed { 8 } else { 10 })
+        .margin_bottom(if collapsed { 8 } else { 10 })
+        .margin_start(10)
+        .margin_end(10)
+        .build();
+    let row_spacer = gtk::Box::builder().hexpand(true).build();
+    row_layout.append(&content);
+    row_layout.append(&row_spacer);
+    row_layout.append(&drag_handle);
+    row.set_child(Some(&row_layout));
+
+    {
+        let drag_handle = drag_handle.clone();
+        let hover = gtk::EventControllerMotion::new();
+        hover.connect_enter(move |_, _, _| {
+            drag_handle.set_opacity(1.0);
+        });
+
+        let drag_handle = drag_handle.clone();
+        hover.connect_leave(move |_| {
+            drag_handle.set_opacity(0.0);
+        });
+        row.add_controller(hover);
+    }
+
+    let menu_popover = gtk::Popover::new();
+    menu_popover.set_parent(&row);
+    menu_popover.set_has_arrow(true);
+    menu_popover.set_autohide(true);
+    menu_popover.set_position(gtk::PositionType::Bottom);
+
+    let menu_box = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(4)
+        .margin_top(8)
+        .margin_bottom(8)
+        .margin_start(8)
+        .margin_end(8)
+        .build();
+
+    let rename_button = gtk::Button::with_label("Rename");
+    let create_subpage_button = gtk::Button::with_label("Create SubPage");
+    let move_as_subpage_button = gtk::Button::with_label("Move as SubPage");
+    let duplicate_button = gtk::Button::with_label("Duplicate");
+    let remove_button = gtk::Button::with_label("Remove");
+    remove_button.add_css_class("destructive-action");
+    create_subpage_button.set_sensitive(false);
+    move_as_subpage_button.set_sensitive(false);
+
+    menu_box.append(&rename_button);
+    menu_box.append(&create_subpage_button);
+    menu_box.append(&move_as_subpage_button);
+    menu_box.append(&duplicate_button);
+    menu_box.append(&remove_button);
+    menu_popover.set_child(Some(&menu_box));
+
+    {
+        let ui = Rc::clone(ui);
+        let menu_popover = menu_popover.clone();
+        let note_id = note.id.clone();
+        rename_button.connect_clicked(move |_| {
+            if let Err(error) = ui.begin_page_rename(&note_id) {
+                ui.set_status(&format!("Rename failed: {error}"));
+            }
+            menu_popover.popdown();
+        });
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        let menu_popover = menu_popover.clone();
+        create_subpage_button.connect_clicked(move |_| {
+            ui.set_status("Create SubPage comes next");
+            menu_popover.popdown();
+        });
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        let menu_popover = menu_popover.clone();
+        move_as_subpage_button.connect_clicked(move |_| {
+            ui.set_status("Move as SubPage comes next");
+            menu_popover.popdown();
+        });
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        let menu_popover = menu_popover.clone();
+        let note_id = note.id.clone();
+        duplicate_button.connect_clicked(move |_| {
+            if let Err(error) = ui.duplicate_page(&note_id) {
+                ui.set_status(&format!("Duplicate failed: {error}"));
+            }
+            menu_popover.popdown();
+        });
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        let menu_popover = menu_popover.clone();
+        let note_id = note.id.clone();
+        remove_button.connect_clicked(move |_| {
+            if let Err(error) = ui.remove_page(&note_id) {
+                ui.set_status(&format!("Remove failed: {error}"));
+            }
+            menu_popover.popdown();
+        });
+    }
+
+    {
+        let menu_popover = menu_popover.clone();
+        let right_click = gtk::GestureClick::new();
+        right_click.set_button(3);
+        right_click.connect_pressed(move |_, _, x, y| {
+            menu_popover
+                .set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+            menu_popover.popup();
+        });
+        row.add_controller(right_click);
+    }
+
+    {
+        let source_id = note.id.to_string();
+        let drag_source = gtk::DragSource::builder()
+            .actions(gtk::gdk::DragAction::MOVE)
+            .build();
+        drag_source.connect_prepare(move |_, _, _| {
+            Some(gtk::gdk::ContentProvider::for_value(&source_id.to_value()))
+        });
+        drag_handle.add_controller(drag_source);
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        let row = row.clone();
+        let target_id = note.id.clone();
+        let drop_target = gtk::DropTarget::new(String::static_type(), gtk::gdk::DragAction::MOVE);
+        drop_target.connect_drop(move |_, value, _, y| {
+            let Ok(source_id) = value.get::<String>() else {
+                return false;
+            };
+
+            let place_after = y > (row.allocation().height() as f64 / 2.0);
+            let source_id = NoteId::new(source_id);
+
+            if let Err(error) = ui.reorder_page(&source_id, &target_id, place_after) {
+                ui.set_status(&format!("Reorder failed: {error}"));
+                return false;
+            }
+
+            true
+        });
+        row.add_controller(drop_target);
+    }
 
     row
 }
