@@ -21,7 +21,7 @@ const BLOCK_CHROME_BOTTOM: i32 = 24;
 const MAX_UNDO_STEPS: usize = 100;
 const MAX_HISTORY_STEPS: usize = 100;
 const SIDEBAR_EXPANDED_WIDTH: i32 = 320;
-const SIDEBAR_COLLAPSED_WIDTH: i32 = 176;
+const SIDEBAR_COLLAPSED_WIDTH: i32 = 124;
 
 fn main() {
     adw::init().expect("Failed to initialize Libadwaita");
@@ -1902,6 +1902,8 @@ fn build_sidebar(ui: &Rc<DriftUi>) -> gtk::Box {
         .margin_end(16)
         .width_request(SIDEBAR_EXPANDED_WIDTH)
         .build();
+    sidebar.set_hexpand(false);
+    sidebar.set_halign(gtk::Align::Start);
 
     let notebook_title = gtk::Label::builder()
         .label("Notebook")
@@ -1935,6 +1937,7 @@ fn build_sidebar(ui: &Rc<DriftUi>) -> gtk::Box {
         .orientation(gtk::Orientation::Horizontal)
         .spacing(8)
         .build();
+    header_row.set_halign(gtk::Align::Fill);
     header_row.append(&notebook_frame);
     header_row.append(&header_spacer);
     header_row.append(&toggle_button);
@@ -1944,16 +1947,20 @@ fn build_sidebar(ui: &Rc<DriftUi>) -> gtk::Box {
         .vexpand(true)
         .child(&ui.list_box)
         .build();
+    scroller.set_hexpand(false);
+    scroller.set_min_content_width(SIDEBAR_EXPANDED_WIDTH - 32);
 
     let list_revealer = gtk::Revealer::builder()
         .reveal_child(true)
         .transition_type(gtk::RevealerTransitionType::SlideUp)
         .build();
     list_revealer.set_child(Some(&scroller));
+    list_revealer.set_hexpand(false);
 
     {
         let sidebar = sidebar.clone();
         let list_revealer = list_revealer.clone();
+        let scroller = scroller.clone();
         let button_signal = toggle_button.clone();
         let button_state = toggle_button.clone();
         let collapsed = Rc::new(Cell::new(false));
@@ -1968,6 +1975,11 @@ fn build_sidebar(ui: &Rc<DriftUi>) -> gtk::Box {
                 SIDEBAR_COLLAPSED_WIDTH
             } else {
                 SIDEBAR_EXPANDED_WIDTH
+            });
+            scroller.set_min_content_width(if next_collapsed {
+                1
+            } else {
+                SIDEBAR_EXPANDED_WIDTH - 32
             });
 
             if next_collapsed {
