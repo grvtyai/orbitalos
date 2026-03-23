@@ -900,19 +900,19 @@ fn build_text_block_widget(
     }
 
     {
-        let ui = Rc::clone(&ui);
-        let widget_for_hover = Rc::clone(&widget);
+        let ui_for_enter = Rc::clone(&ui);
+        let widget_for_enter = Rc::clone(&widget);
         let hover = gtk::EventControllerMotion::new();
         hover.connect_enter(move |_, _, _| {
-            widget_for_hover.hovered.set(true);
-            ui.sync_block_chrome(&widget_for_hover);
+            widget_for_enter.hovered.set(true);
+            ui_for_enter.sync_block_chrome(&widget_for_enter);
         });
 
-        let ui = Rc::clone(&ui);
-        let widget_for_hover = Rc::clone(&widget);
+        let ui_for_leave = Rc::clone(&ui);
+        let widget_for_leave = Rc::clone(&widget);
         hover.connect_leave(move |_| {
-            widget_for_hover.hovered.set(false);
-            ui.sync_block_chrome(&widget_for_hover);
+            widget_for_leave.hovered.set(false);
+            ui_for_leave.sync_block_chrome(&widget_for_leave);
         });
         widget.frame.add_controller(hover);
     }
