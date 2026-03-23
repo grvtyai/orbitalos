@@ -606,16 +606,18 @@ impl DriftUi {
             .set_size_request(layout.width, layout.height + BLOCK_CHROME_TOP + BLOCK_CHROME_BOTTOM);
         widget.editor_frame.set_size_request(layout.width, layout.height);
         widget.drag_handle.set_size_request(layout.width, BLOCK_CHROME_TOP);
-        widget.resize_handle.set_size_request(72, -1);
         widget
             .frame
             .move_(&widget.drag_handle, 0.0, 0.0);
         widget
             .frame
             .move_(&widget.editor_frame, 0.0, BLOCK_CHROME_TOP as f64);
+        let (_, resize_width, _, _) = widget
+            .resize_handle
+            .measure(gtk::Orientation::Horizontal, -1);
         widget.frame.move_(
             &widget.resize_handle,
-            (layout.width - 78).max(0) as f64,
+            (layout.width - resize_width - 6).max(0) as f64,
             (BLOCK_CHROME_TOP + layout.height) as f64,
         );
         self.body_canvas_fixed.move_(
