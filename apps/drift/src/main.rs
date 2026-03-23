@@ -1954,11 +1954,12 @@ fn build_sidebar(ui: &Rc<DriftUi>) -> gtk::Box {
     {
         let sidebar = sidebar.clone();
         let list_revealer = list_revealer.clone();
-        let toggle_button = toggle_button.clone();
+        let button_signal = toggle_button.clone();
+        let button_state = toggle_button.clone();
         let collapsed = Rc::new(Cell::new(false));
         let collapsed_state = Rc::clone(&collapsed);
 
-        toggle_button.connect_clicked(move |_| {
+        button_signal.connect_clicked(move |_| {
             let next_collapsed = !collapsed_state.get();
             collapsed_state.set(next_collapsed);
 
@@ -1970,11 +1971,11 @@ fn build_sidebar(ui: &Rc<DriftUi>) -> gtk::Box {
             });
 
             if next_collapsed {
-                toggle_button.set_icon_name("go-next-symbolic");
-                toggle_button.set_tooltip_text(Some("Expand sidebar"));
+                button_state.set_icon_name("go-next-symbolic");
+                button_state.set_tooltip_text(Some("Expand sidebar"));
             } else {
-                toggle_button.set_icon_name("go-previous-symbolic");
-                toggle_button.set_tooltip_text(Some("Collapse sidebar"));
+                button_state.set_icon_name("go-previous-symbolic");
+                button_state.set_tooltip_text(Some("Collapse sidebar"));
             }
         });
     }
