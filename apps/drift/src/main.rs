@@ -21,7 +21,7 @@ const BLOCK_CHROME_BOTTOM: i32 = 24;
 const MAX_UNDO_STEPS: usize = 100;
 const MAX_HISTORY_STEPS: usize = 100;
 const SIDEBAR_EXPANDED_WIDTH: i32 = 320;
-const SIDEBAR_COLLAPSED_WIDTH: i32 = 124;
+const SIDEBAR_COLLAPSED_WIDTH: i32 = 180;
 
 fn main() {
     adw::init().expect("Failed to initialize Libadwaita");
@@ -97,6 +97,7 @@ struct DriftUi {
     history_redo_stack: RefCell<Vec<DriftHistorySnapshot>>,
     history_suspended: Cell<bool>,
     title_history_pending: Cell<bool>,
+    sidebar_collapsed: Cell<bool>,
     bold_mode: Cell<bool>,
     italic_mode: Cell<bool>,
     underline_mode: Cell<bool>,
@@ -235,6 +236,7 @@ impl DriftUi {
             history_redo_stack: RefCell::new(Vec::new()),
             history_suspended: Cell::new(false),
             title_history_pending: Cell::new(true),
+            sidebar_collapsed: Cell::new(false),
             bold_mode: Cell::new(false),
             italic_mode: Cell::new(false),
             underline_mode: Cell::new(false),
@@ -286,7 +288,8 @@ impl DriftUi {
         self.clear_list_box();
 
         for note in &notes {
-            self.list_box.append(&build_note_row(note));
+            self.list_box
+                .append(&build_note_row(note, self.sidebar_collapsed.get()));
         }
 
         let selected_index = selection.as_ref().and_then(|target| {
@@ -379,7 +382,8 @@ impl DriftUi {
         self.clear_list_box();
 
         for note in &notes {
-            self.list_box.append(&build_note_row(note));
+            self.list_box
+                .append(&build_note_row(note, self.sidebar_collapsed.get()));
         }
 
         if let Some(target) = selection {
@@ -1950,16 +1954,9 @@ fn build_sidebar(ui: &Rc<DriftUi>) -> gtk::Box {
     scroller.set_hexpand(false);
     scroller.set_min_content_width(SIDEBAR_EXPANDED_WIDTH - 32);
 
-    let list_revealer = gtk::Revealer::builder()
-        .reveal_child(true)
-        .transition_type(gtk::RevealerTransitionType::SlideUp)
-        .build();
-    list_revealer.set_child(Some(&scroller));
-    list_revealer.set_hexpand(false);
-
     {
+        let ui = Rc::clone(ui);
         let sidebar = sidebar.clone();
-        let list_revealer = list_revealer.clone();
         let scroller = scroller.clone();
         let button_signal = toggle_button.clone();
         let button_state = toggle_button.clone();
@@ -1969,8 +1966,8 @@ fn build_sidebar(ui: &Rc<DriftUi>) -> gtk::Box {
         button_signal.connect_clicked(move |_| {
             let next_collapsed = !collapsed_state.get();
             collapsed_state.set(next_collapsed);
+            ui.sidebar_collapsed.set(next_collapsed);
 
-            list_revealer.set_reveal_child(!next_collapsed);
             sidebar.set_width_request(if next_collapsed {
                 SIDEBAR_COLLAPSED_WIDTH
             } else {
@@ -1989,11 +1986,15 @@ fn build_sidebar(ui: &Rc<DriftUi>) -> gtk::Box {
                 button_state.set_icon_name("go-previous-symbolic");
                 button_state.set_tooltip_text(Some("Collapse sidebar"));
             }
+
+            if let Err(error) = ui.refresh_note_summaries(ui.selected_note_id.borrow().clone()) {
+                ui.set_status(&format!("Sidebar update failed: {error}"));
+            }
         });
     }
 
     sidebar.append(&header_row);
-    sidebar.append(&list_revealer);
+    sidebar.append(&scroller);
     sidebar
 }
 
@@ -2555,14 +2556,14 @@ fn capture_snapshot(buffer: &gtk::TextBuffer) -> EditorSnapshot {
     }
 }
 
-fn build_note_row(note: &NoteSummary) -> gtk::ListBoxRow {
+fn build_note_row(note: &NoteSummary, collapsed: bool) -> gtk::ListBoxRow {
     let row = gtk::ListBoxRow::new();
 
     let content = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
-        .spacing(6)
-        .margin_top(10)
-        .margin_bottom(10)
+        .spacing(if collapsed { 0 } else { 6 })
+        .margin_top(if collapsed { 8 } else { 10 })
+        .margin_bottom(if collapsed { 8 } else { 10 })
         .margin_start(10)
         .margin_end(10)
         .build();
@@ -2574,20 +2575,21 @@ fn build_note_row(note: &NoteSummary) -> gtk::ListBoxRow {
         .build();
     title.add_css_class("heading");
 
-    let subtitle = gtk::Label::builder()
-        .label(if note.excerpt.is_empty() {
-            "Empty page"
-        } else {
-            note.excerpt.as_str()
-        })
-        .xalign(0.0)
-        .wrap(true)
-        .max_width_chars(28)
-        .build();
-    subtitle.add_css_class("dim-label");
-
     content.append(&title);
-    content.append(&subtitle);
+    if !collapsed {
+        let subtitle = gtk::Label::builder()
+            .label(if note.excerpt.is_empty() {
+                "Empty page"
+            } else {
+                note.excerpt.as_str()
+            })
+            .xalign(0.0)
+            .wrap(true)
+            .max_width_chars(28)
+            .build();
+        subtitle.add_css_class("dim-label");
+        content.append(&subtitle);
+    }
     row.set_child(Some(&content));
 
     row
