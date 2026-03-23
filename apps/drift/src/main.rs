@@ -900,7 +900,7 @@ fn build_text_block_widget(
     }
 
     {
-        let ui = Rc::clone(ui);
+        let ui = Rc::clone(&ui);
         let widget_for_hover = Rc::clone(&widget);
         let hover = gtk::EventControllerMotion::new();
         hover.connect_enter(move |_, _, _| {
@@ -908,7 +908,7 @@ fn build_text_block_widget(
             ui.sync_block_chrome(&widget_for_hover);
         });
 
-        let ui = Rc::clone(ui);
+        let ui = Rc::clone(&ui);
         let widget_for_hover = Rc::clone(&widget);
         hover.connect_leave(move |_| {
             widget_for_hover.hovered.set(false);
