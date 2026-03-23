@@ -20,6 +20,10 @@ const MIGRATIONS: &[Migration] = &[Migration {
     version: 3,
     name: "add_note_body_layout",
     sql: include_str!("../../migrations/0003_add_note_body_layout.sql"),
+}, Migration {
+    version: 4,
+    name: "add_note_display_order",
+    sql: include_str!("../../migrations/0004_add_note_display_order.sql"),
 }];
 
 pub fn run_migrations(connection: &mut Connection) -> OrbitalResult<()> {
