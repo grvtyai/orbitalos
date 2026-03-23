@@ -1621,12 +1621,16 @@ fn install_app_styles() {
             background: alpha(currentColor, 0.22);
         }
 
-        row:drop(active),
-        row:drop(active):hover,
-        row:drop(active):selected {
+        row.page-row:drop(active),
+        row.page-row:drop(active):hover,
+        row.page-row:drop(active):selected,
+        .page-row-target:drop(active),
+        .page-row-target:drop(active):hover,
+        .page-row-target:drop(active):selected {
             background: transparent;
             box-shadow: none;
             outline: none;
+            border: none;
         }
         ",
     );
@@ -2642,6 +2646,7 @@ fn build_note_row(ui: &Rc<DriftUi>, note: &NoteSummary, collapsed: bool) -> gtk:
     let row = gtk::ListBoxRow::new();
     row.set_selectable(true);
     row.set_activatable(true);
+    row.add_css_class("page-row");
 
     let content = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
@@ -2709,6 +2714,7 @@ fn build_note_row(ui: &Rc<DriftUi>, note: &NoteSummary, collapsed: bool) -> gtk:
         .orientation(gtk::Orientation::Vertical)
         .spacing(4)
         .build();
+    row_wrapper.add_css_class("page-row-target");
     row_wrapper.append(&top_indicator);
     row_wrapper.append(&row_layout);
     row_wrapper.append(&bottom_indicator);
@@ -2730,7 +2736,7 @@ fn build_note_row(ui: &Rc<DriftUi>, note: &NoteSummary, collapsed: bool) -> gtk:
     }
 
     let menu_popover = gtk::Popover::new();
-    menu_popover.set_parent(&row);
+    menu_popover.set_parent(&ui.list_box);
     menu_popover.set_has_arrow(true);
     menu_popover.set_autohide(true);
     menu_popover.set_position(gtk::PositionType::Bottom);
@@ -2819,8 +2825,14 @@ fn build_note_row(ui: &Rc<DriftUi>, note: &NoteSummary, collapsed: bool) -> gtk:
         let right_click = gtk::GestureClick::new();
         right_click.set_button(3);
         right_click.connect_pressed(move |_, _, x, y| {
+            let allocation = row.allocation();
             menu_popover
-                .set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+                .set_pointing_to(Some(&gtk::gdk::Rectangle::new(
+                    allocation.x() + x as i32,
+                    allocation.y() + y as i32,
+                    1,
+                    1,
+                )));
             menu_popover.popup();
         });
         row_wrapper.add_controller(right_click);
