@@ -78,10 +78,6 @@ pub fn default_note_canvas_layout(grid_size: i32) -> NoteCanvasLayout {
     }
 }
 
-pub fn default_text_block_layout(grid_size: i32) -> TextBlockLayout {
-    default_note_canvas_layout(grid_size).text_block
-}
-
 pub fn serialize_layout(layout: &NoteCanvasLayout) -> Option<String> {
     serde_json::to_string(layout).ok()
 }
