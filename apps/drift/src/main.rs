@@ -77,6 +77,7 @@ fn main() {
 struct DriftUi {
     database: OrbitalDatabase,
     paths: OrbitalPaths,
+    window: RefCell<Option<adw::ApplicationWindow>>,
     list_box: gtk::ListBox,
     title_entry: gtk::Entry,
     canvas_grid: gtk::DrawingArea,
@@ -168,6 +169,7 @@ impl DriftUi {
             .selection_mode(gtk::SelectionMode::Single)
             .build();
         list_box.add_css_class("boxed-list");
+        list_box.add_css_class("drift-page-list");
 
         let title_entry = gtk::Entry::builder()
             .placeholder_text("Page title")
@@ -216,6 +218,7 @@ impl DriftUi {
         let ui = Rc::new(Self {
             database,
             paths,
+            window: RefCell::new(None),
             list_box,
             title_entry,
             canvas_grid,
@@ -260,6 +263,8 @@ impl DriftUi {
             &edit_button,
             &settings_button,
         );
+        ui.window.replace(Some(window.clone()));
+        ui.apply_theme();
         connect_actions(
             &ui,
             &new_button,
@@ -749,6 +754,31 @@ impl DriftUi {
         self.set_status("Grid setting updated");
     }
 
+    fn apply_theme(&self) {
+        let theme_mode = self.settings.borrow().theme_mode;
+        adw::StyleManager::default().set_color_scheme(match theme_mode {
+            settings::ThemeMode::Dark => adw::ColorScheme::ForceDark,
+            settings::ThemeMode::Light => adw::ColorScheme::ForceLight,
+        });
+
+        if let Some(window) = self.window.borrow().as_ref() {
+            apply_theme_classes(window, theme_mode);
+        }
+    }
+
+    fn update_theme(&self, theme_mode: settings::ThemeMode) {
+        self.settings.borrow_mut().theme_mode = theme_mode;
+
+        if let Err(error) = self.settings.borrow().save(&self.paths) {
+            self.set_status(&format!("Settings save failed: {error}"));
+            return;
+        }
+
+        self.apply_theme();
+        self.canvas_grid.queue_draw();
+        self.set_status("Theme updated");
+    }
+
     fn current_text_block_layout(&self, block_id: &str) -> Option<block_layout::TextBlockLayout> {
         if self.preview_block_id.borrow().as_deref() == Some(block_id) {
             if let Some(layout) = self.preview_layout.borrow().clone() {
@@ -1203,6 +1233,7 @@ fn build_text_block_widget(
     let block_title_chip = gtk::Frame::new(None);
     block_title_chip.set_child(Some(&block_title));
     block_title_chip.add_css_class("card");
+    block_title_chip.add_css_class("drift-block-chip");
     block_title_chip.set_margin_start(2);
     block_title_chip.set_margin_top(2);
     block_title_chip.set_margin_bottom(2);
@@ -1210,6 +1241,7 @@ fn build_text_block_widget(
     let block_hint_chip = gtk::Frame::new(None);
     block_hint_chip.set_child(Some(&block_hint));
     block_hint_chip.add_css_class("card");
+    block_hint_chip.add_css_class("drift-block-chip");
     block_hint_chip.set_margin_end(2);
     block_hint_chip.set_margin_top(2);
     block_hint_chip.set_margin_bottom(2);
@@ -1229,6 +1261,7 @@ fn build_text_block_widget(
     let resize_handle = gtk::Frame::new(None);
     resize_handle.set_child(Some(&resize_label));
     resize_handle.add_css_class("card");
+    resize_handle.add_css_class("drift-block-chip");
     resize_handle.set_halign(gtk::Align::End);
     resize_handle.set_margin_end(6);
     resize_handle.set_margin_top(2);
@@ -1244,6 +1277,7 @@ fn build_text_block_widget(
     editor_frame.set_child(Some(&scroller));
     editor_frame.set_size_request(block.width, block.height);
     editor_frame.add_css_class("card");
+    editor_frame.add_css_class("drift-note-block");
 
     let frame = gtk::Fixed::new();
     frame.set_size_request(block.width, block.height + BLOCK_CHROME_TOP + BLOCK_CHROME_BOTTOM);
@@ -1540,9 +1574,11 @@ fn build_window(
         .default_width(1320)
         .default_height(860)
         .build();
+    window.add_css_class("drift-window");
     install_app_styles();
 
     let header_bar = adw::HeaderBar::new();
+    header_bar.add_css_class("drift-headerbar");
     let header_title = gtk::Label::builder()
         .label("Drift")
         .xalign(0.0)
@@ -1567,6 +1603,7 @@ fn build_window(
     let brand_frame = gtk::Frame::new(None);
     brand_frame.set_child(Some(&brand_box));
     brand_frame.add_css_class("card");
+    brand_frame.add_css_class("drift-chip");
     brand_frame.set_margin_end(14);
 
     header_bar.pack_start(&brand_frame);
@@ -1594,6 +1631,7 @@ fn build_window(
     let sidebar_separator = gtk::Separator::builder()
         .orientation(gtk::Orientation::Vertical)
         .build();
+    sidebar_separator.add_css_class("drift-separator");
     let editor = build_editor(ui);
 
     root.append(&sidebar);
@@ -1604,6 +1642,7 @@ fn build_window(
         .orientation(gtk::Orientation::Vertical)
         .spacing(0)
         .build();
+    shell.add_css_class("drift-shell");
 
     content.append(&ui.edit_revealer);
     content.append(&root);
@@ -1620,6 +1659,15 @@ fn drift_logo_path() -> &'static str {
         env!("CARGO_MANIFEST_DIR"),
         "/../../orbital-assets/logos/drift_logo.png"
     )
+}
+
+fn apply_theme_classes(widget: &impl IsA<gtk::Widget>, theme_mode: settings::ThemeMode) {
+    widget.remove_css_class("theme-dark");
+    widget.remove_css_class("theme-light");
+    match theme_mode {
+        settings::ThemeMode::Dark => widget.add_css_class("theme-dark"),
+        settings::ThemeMode::Light => widget.add_css_class("theme-light"),
+    }
 }
 
 fn install_app_styles() {
@@ -1660,6 +1708,149 @@ fn install_app_styles() {
             outline: none;
             border: none;
         }
+
+        .drift-window.theme-dark,
+        .drift-window.theme-dark > box,
+        .drift-window.theme-dark .drift-shell {
+            background: #160f32;
+            color: #f3ecff;
+        }
+
+        .drift-window.theme-dark .drift-headerbar {
+            background: #22134c;
+            color: #f3ecff;
+            border-bottom: 1px solid alpha(#9a74ff, 0.16);
+        }
+
+        .drift-window.theme-dark .drift-sidebar,
+        .drift-window.theme-dark .drift-editor,
+        .drift-window.theme-dark .drift-toolbar-surface {
+            background: rgba(35, 21, 79, 0.92);
+            color: #f3ecff;
+            border-radius: 24px;
+        }
+
+        .drift-window.theme-dark .drift-editor-surface,
+        .drift-window.theme-dark .drift-note-block,
+        .drift-window.theme-dark .drift-chip,
+        .drift-window.theme-dark .drift-popover {
+            background: rgba(42, 26, 92, 0.96);
+            color: #f7f1ff;
+            border: 1px solid alpha(#a37cff, 0.22);
+            box-shadow: 0 10px 30px alpha(#000000, 0.16);
+        }
+
+        .drift-window.theme-dark .drift-page-title,
+        .drift-window.theme-dark entry,
+        .drift-window.theme-dark textview {
+            background: rgba(51, 33, 108, 0.96);
+            color: #f7f1ff;
+            border: 1px solid alpha(#a37cff, 0.22);
+        }
+
+        .drift-window.theme-dark textview text,
+        .drift-window.theme-dark label {
+            color: #efe7ff;
+        }
+
+        .drift-window.theme-dark .dim-label {
+            color: alpha(#e6dbff, 0.72);
+        }
+
+        .drift-window.theme-dark button,
+        .drift-window.theme-dark togglebutton,
+        .drift-window.theme-dark dropdown,
+        .drift-window.theme-dark combobox,
+        .drift-window.theme-dark entry {
+            color: #f2eaff;
+        }
+
+        .drift-window.theme-dark .header-action,
+        .drift-window.theme-dark .pill,
+        .drift-window.theme-dark button:not(.destructive-action) {
+            background: rgba(84, 57, 160, 0.74);
+            border: 1px solid alpha(#b28fff, 0.18);
+        }
+
+        .drift-window.theme-dark row.page-row:selected {
+            background: linear-gradient(to right, rgba(246, 180, 228, 0.88), rgba(219, 134, 229, 0.78));
+            color: #2a164e;
+        }
+
+        .drift-window.theme-dark row.page-row:selected label {
+            color: #2a164e;
+        }
+
+        .drift-window.theme-dark .destructive-action {
+            background: linear-gradient(to right, #9347e7, #6f31d7);
+            color: #fff6ff;
+        }
+
+        .drift-window.theme-light,
+        .drift-window.theme-light > box,
+        .drift-window.theme-light .drift-shell {
+            background: #f6f1ff;
+            color: #7456b8;
+        }
+
+        .drift-window.theme-light .drift-headerbar {
+            background: #efe2ff;
+            color: #7a5cc5;
+            border-bottom: 1px solid alpha(#c9a9ff, 0.32);
+        }
+
+        .drift-window.theme-light .drift-sidebar,
+        .drift-window.theme-light .drift-editor,
+        .drift-window.theme-light .drift-toolbar-surface {
+            background: rgba(244, 236, 255, 0.94);
+            color: #7a5cc5;
+            border-radius: 24px;
+        }
+
+        .drift-window.theme-light .drift-editor-surface,
+        .drift-window.theme-light .drift-note-block,
+        .drift-window.theme-light .drift-chip,
+        .drift-window.theme-light .drift-popover {
+            background: rgba(255, 252, 255, 0.98);
+            color: #7a5cc5;
+            border: 1px solid alpha(#ceb4ff, 0.46);
+            box-shadow: 0 10px 28px alpha(#b48cff, 0.18);
+        }
+
+        .drift-window.theme-light .drift-page-title,
+        .drift-window.theme-light entry,
+        .drift-window.theme-light textview {
+            background: rgba(255, 255, 255, 0.98);
+            color: #785bc2;
+            border: 1px solid alpha(#ceb4ff, 0.42);
+        }
+
+        .drift-window.theme-light textview text,
+        .drift-window.theme-light label {
+            color: #7a5cc5;
+        }
+
+        .drift-window.theme-light .dim-label {
+            color: alpha(#8367c8, 0.74);
+        }
+
+        .drift-window.theme-light .header-action,
+        .drift-window.theme-light .pill,
+        .drift-window.theme-light button:not(.destructive-action) {
+            background: rgba(233, 222, 255, 0.98);
+            border: 1px solid alpha(#ceb4ff, 0.44);
+            color: #795dc4;
+        }
+
+        .drift-window.theme-light row.page-row:selected {
+            background: linear-gradient(to right, rgba(252, 226, 240, 0.96), rgba(246, 211, 234, 0.92));
+            color: #7a5cc5;
+        }
+
+        .drift-window.theme-light .destructive-action {
+            background: linear-gradient(to right, #8f42e6, #6b2fd4);
+            color: #fff9ff;
+        }
         ",
     );
 
@@ -1683,6 +1874,8 @@ fn build_settings_window(
         .default_width(760)
         .default_height(560)
         .build();
+    window.add_css_class("drift-window");
+    apply_theme_classes(&window, ui.settings.borrow().theme_mode);
 
     let general_page = adw::PreferencesPage::builder()
         .title("Allgemein")
@@ -1732,13 +1925,34 @@ fn build_settings_window(
 
     let personalization_group = adw::PreferencesGroup::builder()
         .title("Personalisierung")
-        .description("Hier kommt spater die optische Anpassung von Drift hinein.")
+        .description("Farbstimmung und visuelle Grundrichtung fur Drift.")
         .build();
-    personalization_group.add(&info_row(
-        "Editor-Design",
-        "Weitere Farben, Block-Stile und Ansichten folgen in einem spateren Schritt.",
-    ));
+    let theme_row = adw::ActionRow::builder()
+        .title("Theme")
+        .subtitle("Schaltet zwischen der dunklen und hellen Drift-Farbwelt um.")
+        .build();
+    let theme_labels = settings::theme_mode_labels();
+    let theme_dropdown = gtk::DropDown::from_strings(&theme_labels);
+    theme_dropdown.set_valign(gtk::Align::Center);
+    theme_dropdown.set_selected(ui.settings.borrow().theme_mode.index());
+    theme_row.add_suffix(&theme_dropdown);
+    theme_row.set_activatable_widget(Some(&theme_dropdown));
+    personalization_group.add(&theme_row);
     personalization_page.add(&personalization_group);
+
+    {
+        let ui = Rc::clone(ui);
+        let settings_window = window.clone();
+        theme_dropdown.connect_selected_notify(move |dropdown| {
+            let theme_mode = settings::ThemeMode::from_index(dropdown.selected());
+            if theme_mode == ui.settings.borrow().theme_mode {
+                return;
+            }
+
+            ui.update_theme(theme_mode);
+            apply_theme_classes(&settings_window, theme_mode);
+        });
+    }
 
     let hotkeys_group = adw::PreferencesGroup::builder()
         .title("Tastatur")
@@ -1793,6 +2007,7 @@ fn build_formatting_toolbar(ui: &Rc<DriftUi>) -> gtk::Box {
         .hexpand(true)
         .build();
     toolbar.add_css_class("toolbar");
+    toolbar.add_css_class("drift-toolbar-surface");
 
     let style_group = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
@@ -2010,6 +2225,7 @@ fn build_sidebar(ui: &Rc<DriftUi>) -> gtk::Box {
         .build();
     sidebar.set_hexpand(false);
     sidebar.set_halign(gtk::Align::Start);
+    sidebar.add_css_class("drift-sidebar");
 
     let notebook_title = gtk::Label::builder()
         .label("Notebook")
@@ -2030,6 +2246,7 @@ fn build_sidebar(ui: &Rc<DriftUi>) -> gtk::Box {
     let notebook_frame = gtk::Frame::new(None);
     notebook_frame.set_child(Some(&notebook_box));
     notebook_frame.add_css_class("card");
+    notebook_frame.add_css_class("drift-chip");
     notebook_frame.set_halign(gtk::Align::Start);
 
     let toggle_button = gtk::Button::builder()
@@ -2123,6 +2340,7 @@ fn build_editor(ui: &Rc<DriftUi>) -> gtk::Box {
         .margin_start(16)
         .margin_end(16)
         .build();
+    editor.add_css_class("drift-editor");
 
     let page_title = gtk::Label::builder()
         .label("Page")
@@ -2132,11 +2350,17 @@ fn build_editor(ui: &Rc<DriftUi>) -> gtk::Box {
 
     let title_entry = ui.title_entry.clone();
     title_entry.add_css_class("title-2");
+    title_entry.add_css_class("drift-page-title");
 
     let canvas_grid = ui.canvas_grid.clone();
     let ui_for_draw = Rc::clone(ui);
     canvas_grid.set_draw_func(move |_, cr, width, height| {
-        cr.set_source_rgb(1.0, 1.0, 1.0);
+        let (bg_r, bg_g, bg_b, dot_r, dot_g, dot_b) = match ui_for_draw.settings.borrow().theme_mode {
+            settings::ThemeMode::Dark => (0.14, 0.09, 0.30, 0.82, 0.72, 1.0),
+            settings::ThemeMode::Light => (0.98, 0.96, 1.0, 0.67, 0.55, 0.95),
+        };
+
+        cr.set_source_rgb(bg_r, bg_g, bg_b);
         let _ = cr.paint();
 
         let major_step = ui_for_draw.grid_size().max(1);
@@ -2147,9 +2371,9 @@ fn build_editor(ui: &Rc<DriftUi>) -> gtk::Box {
             for x in (0..width).step_by(minor_step_usize) {
                 let is_major = x % major_step == 0 && y % major_step == 0;
                 let radius = if is_major { 1.2 } else { 0.7 };
-                let alpha = if is_major { 0.12 } else { 0.06 };
+                let alpha = if is_major { 0.18 } else { 0.08 };
 
-                cr.set_source_rgba(0.0, 0.0, 0.0, alpha);
+                cr.set_source_rgba(dot_r, dot_g, dot_b, alpha);
                 cr.arc(x as f64, y as f64, radius, 0.0, std::f64::consts::TAU);
                 let _ = cr.fill();
             }
@@ -2197,6 +2421,7 @@ fn build_editor(ui: &Rc<DriftUi>) -> gtk::Box {
         .vexpand(true)
         .child(&canvas_overlay)
         .build();
+    body_scroller.add_css_class("drift-editor-surface");
 
     {
         let ui = Rc::clone(ui);
@@ -2768,6 +2993,7 @@ fn build_note_row(ui: &Rc<DriftUi>, note: &NoteSummary, collapsed: bool) -> gtk:
     menu_popover.set_has_arrow(true);
     menu_popover.set_autohide(true);
     menu_popover.set_position(gtk::PositionType::Bottom);
+    menu_popover.add_css_class("drift-popover");
 
     let menu_box = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)

@@ -16,15 +16,23 @@ pub enum GridDensity {
     Wide,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThemeMode {
+    Dark,
+    Light,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DriftSettings {
     pub grid_density: GridDensity,
+    pub theme_mode: ThemeMode,
 }
 
 impl Default for DriftSettings {
     fn default() -> Self {
         Self {
             grid_density: GridDensity::Standard,
+            theme_mode: ThemeMode::Dark,
         }
     }
 }
@@ -51,6 +59,8 @@ impl DriftSettings {
 
             if key.trim() == "grid_density" {
                 settings.grid_density = GridDensity::from_storage(value.trim());
+            } else if key.trim() == "theme_mode" {
+                settings.theme_mode = ThemeMode::from_storage(value.trim());
             }
         }
 
@@ -62,8 +72,9 @@ impl DriftSettings {
         fs::create_dir_all(&config_dir).map_err(|error| error.to_string())?;
 
         let contents = format!(
-            "# Drift settings\n# Stored in OrbitalOS app config\n\ngrid_density={}\n",
-            self.grid_density.storage_key()
+            "# Drift settings\n# Stored in OrbitalOS app config\n\ngrid_density={}\ntheme_mode={}\n",
+            self.grid_density.storage_key(),
+            self.theme_mode.storage_key()
         );
 
         fs::write(config_dir.join(SETTINGS_FILE_NAME), contents)
@@ -139,6 +150,43 @@ impl GridDensity {
     }
 }
 
+impl ThemeMode {
+    pub fn from_index(index: u32) -> Self {
+        match index {
+            1 => Self::Light,
+            _ => Self::Dark,
+        }
+    }
+
+    pub fn index(self) -> u32 {
+        match self {
+            Self::Dark => 0,
+            Self::Light => 1,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Dark => "Dark",
+            Self::Light => "Light",
+        }
+    }
+
+    fn from_storage(value: &str) -> Self {
+        match value {
+            "light" => Self::Light,
+            _ => Self::Dark,
+        }
+    }
+
+    fn storage_key(self) -> &'static str {
+        match self {
+            Self::Dark => "dark",
+            Self::Light => "light",
+        }
+    }
+}
+
 pub fn grid_density_labels() -> [&'static str; 5] {
     [
         GridDensity::ExtraFine.label(),
@@ -147,6 +195,10 @@ pub fn grid_density_labels() -> [&'static str; 5] {
         GridDensity::Relaxed.label(),
         GridDensity::Wide.label(),
     ]
+}
+
+pub fn theme_mode_labels() -> [&'static str; 2] {
+    [ThemeMode::Dark.label(), ThemeMode::Light.label()]
 }
 
 fn settings_path(paths: &OrbitalPaths) -> PathBuf {
