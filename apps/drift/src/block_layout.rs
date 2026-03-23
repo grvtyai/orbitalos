@@ -12,21 +12,67 @@ const DEFAULT_BLOCK_HEIGHT_UNITS: i32 = 48;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteCanvasLayout {
-    pub text_block: TextBlockLayout,
+    pub blocks: Vec<TextBlockState>,
+    pub active_block_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TextBlockLayout {
+pub struct TextBlockState {
+    pub id: String,
     pub x: i32,
     pub y: i32,
     pub width: i32,
     pub height: i32,
+    #[serde(default)]
+    pub body: String,
+    #[serde(default)]
+    pub body_markup: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct LegacyNoteCanvasLayout {
+    text_block: LegacyTextBlockLayout,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct LegacyTextBlockLayout {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
 }
 
 impl Default for NoteCanvasLayout {
     fn default() -> Self {
         default_note_canvas_layout(DEFAULT_GRID_SIZE)
     }
+}
+
+impl TextBlockState {
+    pub fn layout(&self) -> TextBlockLayout {
+        TextBlockLayout {
+            x: self.x,
+            y: self.y,
+            width: self.width,
+            height: self.height,
+        }
+    }
+
+    pub fn with_layout(mut self, layout: TextBlockLayout) -> Self {
+        self.x = layout.x;
+        self.y = layout.y;
+        self.width = layout.width;
+        self.height = layout.height;
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextBlockLayout {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
 }
 
 impl TextBlockLayout {
@@ -66,15 +112,25 @@ impl TextBlockLayout {
 }
 
 pub fn default_note_canvas_layout(grid_size: i32) -> NoteCanvasLayout {
-    let grid_size = normalized_grid_size(grid_size);
+    let block = default_text_block_state("text-block-1".to_string(), grid_size);
 
     NoteCanvasLayout {
-        text_block: TextBlockLayout {
-            x: grid_size * DEFAULT_BLOCK_X_UNITS,
-            y: grid_size * DEFAULT_BLOCK_Y_UNITS,
-            width: grid_size * DEFAULT_BLOCK_WIDTH_UNITS,
-            height: grid_size * DEFAULT_BLOCK_HEIGHT_UNITS,
-        },
+        active_block_id: Some(block.id.clone()),
+        blocks: vec![block],
+    }
+}
+
+pub fn default_text_block_state(id: String, grid_size: i32) -> TextBlockState {
+    let grid_size = normalized_grid_size(grid_size);
+
+    TextBlockState {
+        id,
+        x: grid_size * DEFAULT_BLOCK_X_UNITS,
+        y: grid_size * DEFAULT_BLOCK_Y_UNITS,
+        width: grid_size * DEFAULT_BLOCK_WIDTH_UNITS,
+        height: grid_size * DEFAULT_BLOCK_HEIGHT_UNITS,
+        body: String::new(),
+        body_markup: None,
     }
 }
 
@@ -82,10 +138,59 @@ pub fn serialize_layout(layout: &NoteCanvasLayout) -> Option<String> {
     serde_json::to_string(layout).ok()
 }
 
-pub fn deserialize_layout(value: Option<&str>, grid_size: i32) -> NoteCanvasLayout {
-    value
-        .and_then(|json| serde_json::from_str::<NoteCanvasLayout>(json).ok())
-        .unwrap_or_else(|| default_note_canvas_layout(grid_size))
+pub fn deserialize_layout(
+    value: Option<&str>,
+    grid_size: i32,
+    fallback_body: &str,
+    fallback_body_markup: Option<&str>,
+) -> NoteCanvasLayout {
+    if let Some(json) = value {
+        if let Ok(layout) = serde_json::from_str::<NoteCanvasLayout>(json) {
+            let mut layout = layout;
+
+            if layout.blocks.is_empty() {
+                return default_note_canvas_layout(grid_size);
+            }
+
+            if layout.active_block_id.is_none() {
+                layout.active_block_id = layout.blocks.first().map(|block| block.id.clone());
+            }
+
+            return layout;
+        }
+
+        if let Ok(legacy) = serde_json::from_str::<LegacyNoteCanvasLayout>(json) {
+            return NoteCanvasLayout {
+                active_block_id: Some("text-block-1".to_string()),
+                blocks: vec![TextBlockState {
+                    id: "text-block-1".to_string(),
+                    x: legacy.text_block.x,
+                    y: legacy.text_block.y,
+                    width: legacy.text_block.width,
+                    height: legacy.text_block.height,
+                    body: fallback_body.to_string(),
+                    body_markup: fallback_body_markup.map(ToString::to_string),
+                }],
+            };
+        }
+    }
+
+    let mut layout = default_note_canvas_layout(grid_size);
+    if let Some(block) = layout.blocks.first_mut() {
+        block.body = fallback_body.to_string();
+        block.body_markup = fallback_body_markup.map(ToString::to_string);
+    }
+    layout
+}
+
+pub fn compose_note_body(layout: &NoteCanvasLayout) -> String {
+    layout
+        .blocks
+        .iter()
+        .map(|block| block.body.trim())
+        .filter(|body| !body.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 fn snap_value(value: i32, grid_size: i32) -> i32 {

@@ -72,23 +72,20 @@ struct DriftUi {
     paths: OrbitalPaths,
     list_box: gtk::ListBox,
     title_entry: gtk::Entry,
-    body_buffer: gtk::TextBuffer,
     canvas_grid: gtk::DrawingArea,
     body_canvas_fixed: gtk::Fixed,
-    text_block_frame: gtk::Frame,
     text_block_preview_frame: gtk::Frame,
-    text_block_drag_handle: gtk::Box,
-    text_block_resize_handle: gtk::Label,
     status_label: gtk::Label,
     edit_revealer: gtk::Revealer,
     notes: RefCell<Vec<NoteSummary>>,
     selected_note_id: RefCell<Option<NoteId>>,
     autosave_source: RefCell<Option<glib::SourceId>>,
-    canvas_layout: RefCell<block_layout::NoteCanvasLayout>,
     settings: RefCell<settings::DriftSettings>,
+    text_blocks: RefCell<Vec<Rc<TextBlockWidget>>>,
+    active_block_id: RefCell<Option<String>>,
+    preview_block_id: RefCell<Option<String>>,
     preview_layout: RefCell<Option<block_layout::TextBlockLayout>>,
-    text_block_hovered: Cell<bool>,
-    text_block_interacting: Cell<bool>,
+    next_block_id: Cell<u32>,
     bold_mode: Cell<bool>,
     italic_mode: Cell<bool>,
     underline_mode: Cell<bool>,
@@ -96,6 +93,18 @@ struct DriftUi {
     color_mode: RefCell<Option<String>>,
     dirty: Cell<bool>,
     loading_ui: Cell<bool>,
+}
+
+struct TextBlockWidget {
+    id: String,
+    frame: gtk::Frame,
+    drag_handle: gtk::Box,
+    resize_handle: gtk::Label,
+    buffer: gtk::TextBuffer,
+    view: gtk::TextView,
+    layout: RefCell<block_layout::TextBlockLayout>,
+    hovered: Cell<bool>,
+    interacting: Cell<bool>,
 }
 
 impl DriftUi {
@@ -118,85 +127,25 @@ impl DriftUi {
             .hexpand(true)
             .build();
 
-        let body_buffer = rich_text::create_buffer();
-        let body_view = gtk::TextView::builder()
-            .buffer(&body_buffer)
-            .wrap_mode(gtk::WrapMode::WordChar)
-            .top_margin(12)
-            .bottom_margin(12)
-            .left_margin(12)
-            .right_margin(12)
-            .monospace(false)
-            .vexpand(true)
-            .build();
-
         let body_canvas_fixed = gtk::Fixed::new();
         body_canvas_fixed.set_size_request(block_layout::CANVAS_WIDTH, block_layout::CANVAS_HEIGHT);
         let canvas_grid = gtk::DrawingArea::new();
         canvas_grid.set_content_width(block_layout::CANVAS_WIDTH);
         canvas_grid.set_content_height(block_layout::CANVAS_HEIGHT);
 
-        let text_block_drag_handle = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .spacing(8)
-            .margin_top(8)
-            .margin_bottom(8)
-            .margin_start(12)
-            .margin_end(12)
-            .build();
-        text_block_drag_handle.add_css_class("toolbar");
-
-        let text_block_title = gtk::Label::builder()
-            .label("Text block")
-            .xalign(0.0)
-            .hexpand(true)
-            .build();
-        text_block_title.add_css_class("heading");
-        let text_block_hint = gtk::Label::builder()
-            .label("Drag here")
-            .xalign(1.0)
-            .build();
-        text_block_hint.add_css_class("dim-label");
-
-        text_block_drag_handle.append(&text_block_title);
-        text_block_drag_handle.append(&text_block_hint);
-        text_block_drag_handle.set_opacity(0.0);
-
-        let text_block_resize_handle = gtk::Label::builder()
-            .label("Resize")
-            .halign(gtk::Align::End)
-            .margin_top(6)
-            .margin_bottom(8)
-            .margin_end(10)
-            .build();
-        text_block_resize_handle.add_css_class("dim-label");
-        text_block_resize_handle.set_opacity(0.0);
-
-        let text_block_body = gtk::Box::builder()
-            .orientation(gtk::Orientation::Vertical)
-            .spacing(0)
-            .build();
-        let text_block_scroller = gtk::ScrolledWindow::builder()
-            .hexpand(true)
-            .vexpand(true)
-            .child(&body_view)
-            .build();
-        text_block_body.append(&text_block_drag_handle);
-        text_block_body.append(&text_block_scroller);
-        text_block_body.append(&text_block_resize_handle);
-
-        let text_block_frame = gtk::Frame::new(None);
-        text_block_frame.set_child(Some(&text_block_body));
-        let initial_text_block = initial_layout.text_block.clone();
-        text_block_frame.set_size_request(
-            initial_text_block.width,
-            initial_text_block.height,
-        );
-        text_block_frame.add_css_class("card");
-
         let text_block_preview_frame = gtk::Frame::new(None);
         let text_block_preview_body = gtk::Box::new(gtk::Orientation::Vertical, 0);
         text_block_preview_frame.set_child(Some(&text_block_preview_body));
+        let initial_text_block = initial_layout
+            .blocks
+            .first()
+            .map(|block| block.layout())
+            .unwrap_or(block_layout::TextBlockLayout {
+                x: 0,
+                y: 0,
+                width: 320,
+                height: 220,
+            });
         text_block_preview_frame.set_size_request(
             initial_text_block.width,
             initial_text_block.height,
@@ -222,23 +171,20 @@ impl DriftUi {
             paths,
             list_box,
             title_entry,
-            body_buffer,
             canvas_grid,
             body_canvas_fixed,
-            text_block_frame,
             text_block_preview_frame,
-            text_block_drag_handle,
-            text_block_resize_handle,
             status_label,
             edit_revealer,
             notes: RefCell::new(Vec::new()),
             selected_note_id: RefCell::new(None),
             autosave_source: RefCell::new(None),
-            canvas_layout: RefCell::new(initial_layout),
             settings: RefCell::new(app_settings),
+            text_blocks: RefCell::new(Vec::new()),
+            active_block_id: RefCell::new(initial_layout.active_block_id.clone()),
+            preview_block_id: RefCell::new(None),
             preview_layout: RefCell::new(None),
-            text_block_hovered: Cell::new(false),
-            text_block_interacting: Cell::new(false),
+            next_block_id: Cell::new(initial_layout.blocks.len() as u32 + 1),
             bold_mode: Cell::new(false),
             italic_mode: Cell::new(false),
             underline_mode: Cell::new(false),
@@ -368,45 +314,65 @@ impl DriftUi {
         Ok(())
     }
 
-    fn populate_editor(&self, note: &NoteDocument) {
+    fn populate_editor(self: &Rc<Self>, note: &NoteDocument) {
         self.cancel_autosave();
         self.loading_ui.set(true);
         self.dirty.set(false);
         self.preview_layout.borrow_mut().take();
-        self.text_block_interacting.set(false);
+        self.preview_block_id.borrow_mut().take();
         self.text_block_preview_frame.set_visible(false);
-        self.text_block_frame.set_opacity(1.0);
         self.title_entry.set_text(&note.summary.title);
-        self.canvas_layout
-            .replace(block_layout::deserialize_layout(
-                note.body_layout.as_deref(),
-                self.grid_size(),
-            ));
-        self.apply_canvas_layout();
-        self.sync_text_block_chrome();
-        rich_text::set_buffer_content(
-            &self.body_buffer,
+        self.clear_canvas_blocks();
+
+        let layout = block_layout::deserialize_layout(
+            note.body_layout.as_deref(),
+            self.grid_size(),
             &note.body,
             note.body_markup.as_deref(),
         );
+
+        self.next_block_id
+            .set(layout.blocks.len().max(1) as u32 + 1);
+
+        for block in &layout.blocks {
+            let widget = build_text_block_widget(self, block);
+            self.body_canvas_fixed.put(&widget.frame, 0.0, 0.0);
+            self.text_blocks.borrow_mut().push(widget);
+        }
+
+        let active_id = layout
+            .active_block_id
+            .or_else(|| layout.blocks.first().map(|block| block.id.clone()));
+        self.active_block_id.replace(active_id);
+        self.apply_canvas_layout();
+        self.sync_all_block_chrome();
         self.loading_ui.set(false);
     }
 
-    fn clear_editor(&self) {
+    fn clear_editor(self: &Rc<Self>) {
         self.cancel_autosave();
         self.loading_ui.set(true);
         self.dirty.set(false);
         self.selected_note_id.replace(None);
         self.preview_layout.borrow_mut().take();
-        self.text_block_interacting.set(false);
+        self.preview_block_id.borrow_mut().take();
         self.text_block_preview_frame.set_visible(false);
-        self.text_block_frame.set_opacity(1.0);
         self.title_entry.set_text("");
-        self.canvas_layout
-            .replace(block_layout::default_note_canvas_layout(self.grid_size()));
+        self.clear_canvas_blocks();
+
+        let layout = block_layout::default_note_canvas_layout(self.grid_size());
+        self.next_block_id
+            .set(layout.blocks.len().max(1) as u32 + 1);
+
+        for block in &layout.blocks {
+            let widget = build_text_block_widget(self, block);
+            self.body_canvas_fixed.put(&widget.frame, 0.0, 0.0);
+            self.text_blocks.borrow_mut().push(widget);
+        }
+
+        self.active_block_id.replace(layout.active_block_id);
         self.apply_canvas_layout();
-        self.sync_text_block_chrome();
-        rich_text::set_buffer_content(&self.body_buffer, "", None);
+        self.sync_all_block_chrome();
         self.loading_ui.set(false);
     }
 
@@ -422,10 +388,13 @@ impl DriftUi {
         };
 
         let title = self.title_entry.text().trim().to_string();
-        let body = self
-            .body_buffer
-            .text(&self.body_buffer.start_iter(), &self.body_buffer.end_iter(), true)
-            .to_string();
+        let layout = self.snapshot_layout();
+        let body = block_layout::compose_note_body(&layout);
+        let body_markup = if layout.blocks.len() == 1 {
+            layout.blocks.first().and_then(|block| block.body_markup.clone())
+        } else {
+            None
+        };
 
         let existing = self
             .repository()
@@ -445,8 +414,8 @@ impl DriftUi {
                 ..existing.summary
             },
             body,
-            body_markup: rich_text::serialize_buffer(&self.body_buffer),
-            body_layout: block_layout::serialize_layout(&self.canvas_layout.borrow()),
+            body_markup,
+            body_layout: block_layout::serialize_layout(&layout),
         };
 
         let saved = self.repository().save(&note)?;
@@ -459,75 +428,98 @@ impl DriftUi {
     }
 
     fn apply_canvas_layout(&self) {
-        let layout = self
-            .canvas_layout
-            .borrow()
-            .clone()
-            .text_block
-            .clamp_to_canvas(self.grid_size());
-
-        self.render_text_block_layout(&layout);
+        for widget in self.text_blocks.borrow().iter() {
+            let layout = widget.layout.borrow().clone().clamp_to_canvas(self.grid_size());
+            self.render_block_layout(widget, &layout);
+        }
     }
 
-    fn render_text_block_layout(&self, layout: &block_layout::TextBlockLayout) {
-        self.render_frame_layout(&self.text_block_frame, layout);
-    }
-
-    fn render_preview_layout(&self, layout: &block_layout::TextBlockLayout) {
-        self.render_frame_layout(&self.text_block_preview_frame, layout);
-    }
-
-    fn render_frame_layout(&self, frame: &gtk::Frame, layout: &block_layout::TextBlockLayout) {
-        frame.set_size_request(layout.width, layout.height);
+    fn render_block_layout(&self, widget: &TextBlockWidget, layout: &block_layout::TextBlockLayout) {
+        widget.frame.set_size_request(layout.width, layout.height);
         self.body_canvas_fixed.move_(
-            frame,
+            &widget.frame,
             layout.x as f64,
             layout.y as f64,
         );
     }
 
-    fn update_text_block_layout(&self, new_layout: block_layout::TextBlockLayout) {
+    fn render_preview_layout(&self, layout: &block_layout::TextBlockLayout) {
+        self.text_block_preview_frame
+            .set_size_request(layout.width, layout.height);
+        self.body_canvas_fixed.move_(
+            &self.text_block_preview_frame,
+            layout.x as f64,
+            layout.y as f64,
+        );
+    }
+
+    fn update_text_block_layout(&self, block_id: &str, new_layout: block_layout::TextBlockLayout) {
         let preview = new_layout
             .preview_constrained(self.grid_size())
             .clamp_to_canvas(self.grid_size());
+        self.preview_block_id
+            .replace(Some(block_id.to_string()));
         self.preview_layout.replace(Some(preview.clone()));
         self.render_preview_layout(&preview);
     }
 
     fn finalize_text_block_layout(&self) {
+        let Some(block_id) = self.preview_block_id.borrow().clone() else {
+            return;
+        };
+
         let finalized = self
             .preview_layout
             .borrow()
             .clone()
-            .unwrap_or_else(|| self.canvas_layout.borrow().text_block.clone())
+            .or_else(|| self.current_text_block_layout(&block_id))
+            .unwrap_or(block_layout::TextBlockLayout {
+                x: 0,
+                y: 0,
+                width: self.grid_size() * 44,
+                height: self.grid_size() * 28,
+            })
             .snapped_to_grid(self.grid_size())
             .clamp_to_canvas(self.grid_size());
 
-        self.canvas_layout.borrow_mut().text_block = finalized.clone();
-        self.render_text_block_layout(&finalized);
+        if let Some(widget) = self.find_text_block(&block_id) {
+            widget.layout.replace(finalized.clone());
+            self.render_block_layout(&widget, &finalized);
+        }
     }
 
-    fn begin_text_block_interaction(&self) {
-        self.text_block_interacting.set(true);
-        let current_layout = self
-            .canvas_layout
+    fn begin_text_block_interaction(&self, block_id: &str) {
+        let Some(widget) = self.find_text_block(block_id) else {
+            return;
+        };
+
+        widget.interacting.set(true);
+        let current_layout = widget
+            .layout
             .borrow()
-            .text_block
             .clone()
             .clamp_to_canvas(self.grid_size());
+        self.preview_block_id
+            .replace(Some(block_id.to_string()));
         self.preview_layout.replace(Some(current_layout.clone()));
         self.render_preview_layout(&current_layout);
         self.text_block_preview_frame.set_visible(true);
-        self.text_block_frame.set_opacity(0.28);
-        self.sync_text_block_chrome();
+        widget.frame.set_opacity(0.28);
+        self.sync_block_chrome(&widget);
     }
 
     fn finish_text_block_interaction(&self) {
+        if let Some(block_id) = self.preview_block_id.borrow().clone() {
+            if let Some(widget) = self.find_text_block(&block_id) {
+                widget.frame.set_opacity(1.0);
+                widget.interacting.set(false);
+                self.sync_block_chrome(&widget);
+            }
+        }
+
         self.preview_layout.borrow_mut().take();
+        self.preview_block_id.borrow_mut().take();
         self.text_block_preview_frame.set_visible(false);
-        self.text_block_frame.set_opacity(1.0);
-        self.text_block_interacting.set(false);
-        self.sync_text_block_chrome();
     }
 
     fn pending_format(&self) -> rich_text::PendingFormat {
@@ -549,12 +541,18 @@ impl DriftUi {
         self.set_status("Editing...");
     }
 
-    fn sync_text_block_chrome(&self) {
-        let visible = self.text_block_hovered.get() || self.text_block_interacting.get();
+    fn sync_block_chrome(&self, widget: &TextBlockWidget) {
+        let visible = widget.hovered.get() || widget.interacting.get();
         let opacity = if visible { 1.0 } else { 0.0 };
 
-        self.text_block_drag_handle.set_opacity(opacity);
-        self.text_block_resize_handle.set_opacity(opacity);
+        widget.drag_handle.set_opacity(opacity);
+        widget.resize_handle.set_opacity(opacity);
+    }
+
+    fn sync_all_block_chrome(&self) {
+        for widget in self.text_blocks.borrow().iter() {
+            self.sync_block_chrome(widget);
+        }
     }
 
     fn grid_size(&self) -> i32 {
@@ -574,47 +572,128 @@ impl DriftUi {
         self.set_status("Grid setting updated");
     }
 
-    fn current_text_block_layout(&self) -> block_layout::TextBlockLayout {
-        self.preview_layout
-            .borrow()
-            .clone()
-            .unwrap_or_else(|| self.canvas_layout.borrow().text_block.clone())
-            .clamp_to_canvas(self.grid_size())
+    fn current_text_block_layout(&self, block_id: &str) -> Option<block_layout::TextBlockLayout> {
+        if self.preview_block_id.borrow().as_deref() == Some(block_id) {
+            if let Some(layout) = self.preview_layout.borrow().clone() {
+                return Some(layout.clamp_to_canvas(self.grid_size()));
+            }
+        }
+
+        self.find_text_block(block_id)
+            .map(|widget| widget.layout.borrow().clone().clamp_to_canvas(self.grid_size()))
     }
 
-    fn point_hits_text_block(&self, x: f64, y: f64) -> bool {
-        let layout = self.current_text_block_layout();
+    fn point_hits_any_block(&self, x: f64, y: f64) -> bool {
         let x = x.round() as i32;
         let y = y.round() as i32;
 
-        x >= layout.x
-            && x <= layout.x + layout.width
-            && y >= layout.y
-            && y <= layout.y + layout.height
+        self.text_blocks.borrow().iter().rev().any(|widget| {
+            let layout = self
+                .current_text_block_layout(&widget.id)
+                .unwrap_or_else(|| widget.layout.borrow().clone());
+
+            x >= layout.x
+                && x <= layout.x + layout.width
+                && y >= layout.y
+                && y <= layout.y + layout.height
+        })
     }
 
-    fn create_text_block_at(&self, x: i32, y: i32) -> orbital_core::OrbitalResult<()> {
+    fn create_text_block_at(self: &Rc<Self>, x: i32, y: i32) -> orbital_core::OrbitalResult<()> {
         let grid_size = self.grid_size();
-        let width = grid_size * 44;
-        let height = grid_size * 28;
-
-        let layout = block_layout::TextBlockLayout {
+        let block = block_layout::TextBlockState {
+            id: self.next_text_block_id(),
             x,
             y,
-            width,
-            height,
+            width: grid_size * 44,
+            height: grid_size * 28,
+            body: String::new(),
+            body_markup: None,
         }
-        .snapped_to_grid(grid_size)
-        .clamp_to_canvas(grid_size);
+        .with_layout(
+            block_layout::TextBlockLayout {
+                x,
+                y,
+                width: grid_size * 44,
+                height: grid_size * 28,
+            }
+            .snapped_to_grid(grid_size)
+            .clamp_to_canvas(grid_size),
+        );
 
         self.preview_layout.borrow_mut().take();
+        self.preview_block_id.borrow_mut().take();
         self.text_block_preview_frame.set_visible(false);
-        self.text_block_frame.set_opacity(1.0);
-        self.text_block_interacting.set(false);
-        self.canvas_layout.borrow_mut().text_block = layout;
-        self.apply_canvas_layout();
+        let widget = build_text_block_widget(self, &block);
+        self.body_canvas_fixed.put(&widget.frame, 0.0, 0.0);
+        self.text_blocks.borrow_mut().push(widget.clone());
+        self.active_block_id.replace(Some(block.id.clone()));
+        self.render_block_layout(&widget, &block.layout());
+        self.sync_block_chrome(&widget);
+        widget.view.grab_focus();
         self.mark_dirty();
         self.save_immediately("Text block created")
+    }
+
+    fn next_text_block_id(&self) -> String {
+        let next = self.next_block_id.get();
+        self.next_block_id.set(next + 1);
+        format!("text-block-{next}")
+    }
+
+    fn find_text_block(&self, block_id: &str) -> Option<Rc<TextBlockWidget>> {
+        self.text_blocks
+            .borrow()
+            .iter()
+            .find(|widget| widget.id == block_id)
+            .cloned()
+    }
+
+    fn set_active_block(&self, block_id: Option<String>) {
+        self.active_block_id.replace(block_id);
+    }
+
+    fn active_text_block(&self) -> Option<Rc<TextBlockWidget>> {
+        let block_id = self.active_block_id.borrow().clone()?;
+        self.find_text_block(&block_id)
+    }
+
+    fn active_buffer(&self) -> Option<gtk::TextBuffer> {
+        self.active_text_block().map(|widget| widget.buffer.clone())
+    }
+
+    fn snapshot_layout(&self) -> block_layout::NoteCanvasLayout {
+        let blocks = self
+            .text_blocks
+            .borrow()
+            .iter()
+            .map(|widget| block_layout::TextBlockState {
+                id: widget.id.clone(),
+                x: widget.layout.borrow().x,
+                y: widget.layout.borrow().y,
+                width: widget.layout.borrow().width,
+                height: widget.layout.borrow().height,
+                body: widget
+                    .buffer
+                    .text(&widget.buffer.start_iter(), &widget.buffer.end_iter(), true)
+                    .to_string(),
+                body_markup: rich_text::serialize_buffer(&widget.buffer),
+            })
+            .collect();
+
+        block_layout::NoteCanvasLayout {
+            blocks,
+            active_block_id: self.active_block_id.borrow().clone(),
+        }
+    }
+
+    fn clear_canvas_blocks(&self) {
+        let widgets = self.text_blocks.borrow().clone();
+        for widget in widgets {
+            self.body_canvas_fixed.remove(&widget.frame);
+        }
+
+        self.text_blocks.borrow_mut().clear();
     }
 
     fn schedule_autosave(self: &Rc<Self>) {
