@@ -1,4 +1,5 @@
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -18,6 +19,7 @@ const AUTOSAVE_DELAY_MS: u64 = 900;
 const BLOCK_CHROME_TOP: i32 = 28;
 const BLOCK_CHROME_BOTTOM: i32 = 24;
 const MAX_UNDO_STEPS: usize = 100;
+const MAX_HISTORY_STEPS: usize = 100;
 
 fn main() {
     adw::init().expect("Failed to initialize Libadwaita");
@@ -89,6 +91,10 @@ struct DriftUi {
     preview_block_id: RefCell<Option<String>>,
     preview_layout: RefCell<Option<block_layout::TextBlockLayout>>,
     next_block_id: Cell<u32>,
+    history_undo_stack: RefCell<Vec<DriftHistorySnapshot>>,
+    history_redo_stack: RefCell<Vec<DriftHistorySnapshot>>,
+    history_suspended: Cell<bool>,
+    title_history_pending: Cell<bool>,
     bold_mode: Cell<bool>,
     italic_mode: Cell<bool>,
     underline_mode: Cell<bool>,
@@ -121,6 +127,12 @@ struct EditorSnapshot {
     markup: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DriftHistorySnapshot {
+    notes: Vec<NoteDocument>,
+    selected_note_id: Option<NoteId>,
+}
+
 impl DriftUi {
     fn build(app: &adw::Application) -> orbital_core::OrbitalResult<adw::ApplicationWindow> {
         let paths = OrbitalPaths::discover()?;
@@ -138,6 +150,10 @@ impl DriftUi {
             .tooltip_text("Redo")
             .build();
         let edit_button = gtk::ToggleButton::builder().label("Edit").build();
+        new_button.add_css_class("header-action");
+        undo_button.add_css_class("header-action");
+        redo_button.add_css_class("header-action");
+        edit_button.add_css_class("header-action");
 
         let list_box = gtk::ListBox::builder()
             .selection_mode(gtk::SelectionMode::Single)
@@ -207,6 +223,10 @@ impl DriftUi {
             preview_block_id: RefCell::new(None),
             preview_layout: RefCell::new(None),
             next_block_id: Cell::new(initial_layout.blocks.len() as u32 + 1),
+            history_undo_stack: RefCell::new(Vec::new()),
+            history_redo_stack: RefCell::new(Vec::new()),
+            history_suspended: Cell::new(false),
+            title_history_pending: Cell::new(true),
             bold_mode: Cell::new(false),
             italic_mode: Cell::new(false),
             underline_mode: Cell::new(false),
@@ -242,7 +262,7 @@ impl DriftUi {
         ui.reload_notes(None)?;
 
         if ui.notes.borrow().is_empty() {
-            ui.create_note()?;
+            ui.create_note(false)?;
         }
 
         Ok(window)
@@ -283,7 +303,11 @@ impl DriftUi {
         Ok(())
     }
 
-    fn create_note(self: &Rc<Self>) -> orbital_core::OrbitalResult<()> {
+    fn create_note(self: &Rc<Self>, record_history: bool) -> orbital_core::OrbitalResult<()> {
+        if record_history {
+            self.record_history_checkpoint()?;
+        }
+
         let repository = self.repository();
         let mut new_note = NewNote::new(generate_note_id(), "Untitled page", "");
         new_note.body_layout = block_layout::serialize_layout(&block_layout::default_note_canvas_layout(
@@ -298,6 +322,43 @@ impl DriftUi {
         self.set_status("New page created");
 
         Ok(())
+    }
+
+    fn assemble_current_note_document(&self) -> orbital_core::OrbitalResult<Option<NoteDocument>> {
+        let Some(note_id) = self.selected_note_id.borrow().clone() else {
+            return Ok(None);
+        };
+
+        let title = self.title_entry.text().trim().to_string();
+        let layout = self.snapshot_layout();
+        let body = block_layout::compose_note_body(&layout);
+        let body_markup = if layout.blocks.len() == 1 {
+            layout.blocks.first().and_then(|block| block.body_markup.clone())
+        } else {
+            None
+        };
+
+        let existing = self
+            .repository()
+            .get(&note_id)?
+            .ok_or_else(|| orbital_core::OrbitalError::NotFound {
+                entity: "note",
+                id: note_id.to_string(),
+            })?;
+
+        Ok(Some(NoteDocument {
+            summary: NoteSummary {
+                title: if title.is_empty() {
+                    "Untitled page".to_string()
+                } else {
+                    title
+                },
+                ..existing.summary
+            },
+            body,
+            body_markup,
+            body_layout: block_layout::serialize_layout(&layout),
+        }))
     }
 
     fn refresh_note_summaries(&self, preferred_note: Option<NoteId>) -> orbital_core::OrbitalResult<()> {
@@ -356,6 +417,7 @@ impl DriftUi {
         self.cancel_autosave();
         self.loading_ui.set(true);
         self.dirty.set(false);
+        self.title_history_pending.set(true);
         self.preview_layout.borrow_mut().take();
         self.preview_block_id.borrow_mut().take();
         self.text_block_preview_frame.set_visible(false);
@@ -391,6 +453,7 @@ impl DriftUi {
         self.cancel_autosave();
         self.loading_ui.set(true);
         self.dirty.set(false);
+        self.title_history_pending.set(true);
         self.selected_note_id.replace(None);
         self.preview_layout.borrow_mut().take();
         self.preview_block_id.borrow_mut().take();
@@ -421,39 +484,8 @@ impl DriftUi {
     }
 
     fn persist_editor_to_database(&self) -> orbital_core::OrbitalResult<Option<NoteDocument>> {
-        let Some(note_id) = self.selected_note_id.borrow().clone() else {
+        let Some(note) = self.assemble_current_note_document()? else {
             return Ok(None);
-        };
-
-        let title = self.title_entry.text().trim().to_string();
-        let layout = self.snapshot_layout();
-        let body = block_layout::compose_note_body(&layout);
-        let body_markup = if layout.blocks.len() == 1 {
-            layout.blocks.first().and_then(|block| block.body_markup.clone())
-        } else {
-            None
-        };
-
-        let existing = self
-            .repository()
-            .get(&note_id)?
-            .ok_or_else(|| orbital_core::OrbitalError::NotFound {
-                entity: "note",
-                id: note_id.to_string(),
-            })?;
-
-        let note = NoteDocument {
-            summary: NoteSummary {
-                title: if title.is_empty() {
-                    "Untitled page".to_string()
-                } else {
-                    title
-                },
-                ..existing.summary
-            },
-            body,
-            body_markup,
-            body_layout: block_layout::serialize_layout(&layout),
         };
 
         let saved = self.repository().save(&note)?;
@@ -654,6 +686,8 @@ impl DriftUi {
     }
 
     fn create_text_block_at(self: &Rc<Self>, x: i32, y: i32) -> orbital_core::OrbitalResult<()> {
+        self.record_history_checkpoint()?;
+
         let grid_size = self.grid_size();
         let block = block_layout::TextBlockState {
             id: self.next_text_block_id(),
@@ -725,6 +759,7 @@ impl DriftUi {
             return Ok(false);
         };
 
+        self.record_history_checkpoint()?;
         let changed = rich_text::set_paragraph_style(&buffer, style);
         if changed {
             self.mark_dirty();
@@ -739,6 +774,7 @@ impl DriftUi {
             return Ok(false);
         };
 
+        self.record_history_checkpoint()?;
         let changed = insert_checklist(&buffer);
         if changed {
             self.mark_dirty();
@@ -748,48 +784,32 @@ impl DriftUi {
         Ok(changed)
     }
 
-    fn handle_undo(&self) -> orbital_core::OrbitalResult<bool> {
-        let Some(widget) = self.active_text_block() else {
-            return Ok(false);
-        };
-
-        let Some(snapshot) = widget.undo_stack.borrow_mut().pop() else {
+    fn handle_undo(self: &Rc<Self>) -> orbital_core::OrbitalResult<bool> {
+        let Some(snapshot) = self.history_undo_stack.borrow_mut().pop() else {
             self.set_status("Nothing to undo");
             return Ok(false);
         };
 
-        widget
-            .redo_stack
-            .borrow_mut()
-            .push(capture_snapshot(&widget.buffer));
-        apply_snapshot_to_widget(&widget, &snapshot);
-        self.mark_dirty();
-        self.save_immediately("Undo applied")?;
+        let current = self.capture_history_snapshot()?;
+        Self::push_history_snapshot(&self.history_redo_stack, current);
+        self.restore_history_snapshot(&snapshot, "Undo applied")?;
         Ok(true)
     }
 
-    fn handle_redo(&self) -> orbital_core::OrbitalResult<bool> {
-        let Some(widget) = self.active_text_block() else {
-            return Ok(false);
-        };
-
-        let Some(snapshot) = widget.redo_stack.borrow_mut().pop() else {
+    fn handle_redo(self: &Rc<Self>) -> orbital_core::OrbitalResult<bool> {
+        let Some(snapshot) = self.history_redo_stack.borrow_mut().pop() else {
             self.set_status("Nothing to redo");
             return Ok(false);
         };
 
-        widget
-            .undo_stack
-            .borrow_mut()
-            .push(capture_snapshot(&widget.buffer));
-        apply_snapshot_to_widget(&widget, &snapshot);
-        self.mark_dirty();
-        self.save_immediately("Redo applied")?;
+        let current = self.capture_history_snapshot()?;
+        Self::push_history_snapshot(&self.history_undo_stack, current);
+        self.restore_history_snapshot(&snapshot, "Redo applied")?;
         Ok(true)
     }
 
     fn handle_shortcut(
-        &self,
+        self: &Rc<Self>,
         keyval: gtk::gdk::Key,
         state: gtk::gdk::ModifierType,
     ) -> orbital_core::OrbitalResult<bool> {
@@ -836,6 +856,7 @@ impl DriftUi {
             return Ok(false);
         };
 
+        self.record_history_checkpoint()?;
         let changed = action(buffer);
         if changed {
             self.mark_dirty();
@@ -868,6 +889,111 @@ impl DriftUi {
             blocks,
             active_block_id: self.active_block_id.borrow().clone(),
         }
+    }
+
+    fn capture_history_snapshot(&self) -> orbital_core::OrbitalResult<DriftHistorySnapshot> {
+        let repository = self.repository();
+        let mut notes = Vec::new();
+        let active_notes = repository.list_active()?;
+        let current_note = self.assemble_current_note_document()?;
+
+        for summary in active_notes {
+            if current_note
+                .as_ref()
+                .map(|note| note.summary.id == summary.id)
+                .unwrap_or(false)
+            {
+                if let Some(note) = current_note.clone() {
+                    notes.push(note);
+                }
+            } else if let Some(note) = repository.get(&summary.id)? {
+                notes.push(note);
+            }
+        }
+
+        Ok(DriftHistorySnapshot {
+            notes,
+            selected_note_id: self.selected_note_id.borrow().clone(),
+        })
+    }
+
+    fn push_history_snapshot(
+        stack: &RefCell<Vec<DriftHistorySnapshot>>,
+        snapshot: DriftHistorySnapshot,
+    ) {
+        let mut stack = stack.borrow_mut();
+        if stack.last().map(|existing| existing == &snapshot).unwrap_or(false) {
+            return;
+        }
+
+        stack.push(snapshot);
+        if stack.len() > MAX_HISTORY_STEPS {
+            stack.remove(0);
+        }
+    }
+
+    fn record_history_checkpoint(&self) -> orbital_core::OrbitalResult<()> {
+        if self.loading_ui.get() || self.history_suspended.get() {
+            return Ok(());
+        }
+
+        let snapshot = self.capture_history_snapshot()?;
+        Self::push_history_snapshot(&self.history_undo_stack, snapshot);
+        self.history_redo_stack.borrow_mut().clear();
+        Ok(())
+    }
+
+    fn restore_history_snapshot(
+        self: &Rc<Self>,
+        snapshot: &DriftHistorySnapshot,
+        success_message: &str,
+    ) -> orbital_core::OrbitalResult<()> {
+        self.cancel_autosave();
+        self.history_suspended.set(true);
+
+        let result = (|| -> orbital_core::OrbitalResult<()> {
+            let repository = self.repository();
+            let target_ids: HashSet<String> = snapshot
+                .notes
+                .iter()
+                .map(|note| note.summary.id.to_string())
+                .collect();
+
+            for note in &snapshot.notes {
+                if repository.get(&note.summary.id)?.is_some() {
+                    repository.save(note)?;
+                } else {
+                    let mut new_note = NewNote::new(
+                        note.summary.id.clone(),
+                        note.summary.title.clone(),
+                        note.body.clone(),
+                    );
+                    new_note.body_markup = note.body_markup.clone();
+                    new_note.body_layout = note.body_layout.clone();
+                    new_note.tags = note.summary.tags.clone();
+                    repository.create(new_note)?;
+                }
+            }
+
+            for current in repository.list_active()? {
+                if !target_ids.contains(current.id.as_str()) {
+                    repository.archive(&current.id)?;
+                }
+            }
+
+            self.reload_notes(snapshot.selected_note_id.clone())?;
+            if self.notes.borrow().is_empty() {
+                self.clear_editor();
+            }
+
+            self.dirty.set(false);
+            self.title_history_pending.set(true);
+            self.set_status(success_message);
+            Ok(())
+        })();
+
+        self.history_suspended.set(false);
+        result
     }
 
     fn clear_canvas_blocks(&self) {
@@ -1115,8 +1241,14 @@ fn build_text_block_widget(
 
     {
         let widget_for_history = Rc::clone(&widget);
+        let ui_for_history = Rc::clone(ui);
         widget.buffer.connect_begin_user_action(move |_| {
             if widget_for_history.restoring_history.get() {
+                return;
+            }
+
+            if let Err(error) = ui_for_history.record_history_checkpoint() {
+                ui_for_history.set_status(&format!("History checkpoint failed: {error}"));
                 return;
             }
 
@@ -1193,6 +1325,11 @@ fn build_text_block_widget(
             let drag_origin = Rc::clone(&drag_origin);
             let widget_for_drag_begin = Rc::clone(&widget_for_drag);
             gesture.connect_drag_begin(move |_, _, _| {
+                if let Err(error) = ui.record_history_checkpoint() {
+                    ui.set_status(&format!("History checkpoint failed: {error}"));
+                    return;
+                }
+
                 ui.set_active_block(Some(widget_for_drag_begin.id.clone()));
                 ui.begin_text_block_interaction(&widget_for_drag_begin.id);
                 drag_origin.replace(Some(widget_for_drag_begin.layout.borrow().clone()));
@@ -1246,6 +1383,11 @@ fn build_text_block_widget(
             let resize_origin = Rc::clone(&resize_origin);
             let widget_for_resize_begin = Rc::clone(&widget_for_resize);
             gesture.connect_drag_begin(move |_, _, _| {
+                if let Err(error) = ui.record_history_checkpoint() {
+                    ui.set_status(&format!("History checkpoint failed: {error}"));
+                    return;
+                }
+
                 ui.set_active_block(Some(widget_for_resize_begin.id.clone()));
                 ui.begin_text_block_interaction(&widget_for_resize_begin.id);
                 resize_origin.replace(Some(widget_for_resize_begin.layout.borrow().clone()));
@@ -1306,6 +1448,7 @@ fn build_window(
         .default_width(1320)
         .default_height(860)
         .build();
+    install_app_styles();
 
     let header_bar = adw::HeaderBar::new();
     let header_title = gtk::Label::builder()
@@ -1385,6 +1528,38 @@ fn drift_logo_path() -> &'static str {
         env!("CARGO_MANIFEST_DIR"),
         "/../../orbital-assets/logos/drift_logo.png"
     )
+}
+
+fn install_app_styles() {
+    let provider = gtk::CssProvider::new();
+    provider.load_from_data(
+        "
+        .header-action {
+            border-radius: 999px;
+            border: 1px solid alpha(currentColor, 0.16);
+            background: alpha(currentColor, 0.03);
+            padding: 4px 12px;
+        }
+
+        .header-action:hover {
+            background: alpha(currentColor, 0.06);
+        }
+
+        .header-action:active,
+        .header-action:checked {
+            background: alpha(currentColor, 0.09);
+            border-color: alpha(currentColor, 0.22);
+        }
+        ",
+    );
+
+    if let Some(display) = gtk::gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
 }
 
 fn build_settings_window(
@@ -1655,11 +1830,19 @@ fn build_formatting_toolbar(ui: &Rc<DriftUi>) -> gtk::Box {
 
             let changed = if color_id.as_str() == "default" {
                 ui.color_mode.replace(None);
+                if let Err(error) = ui.record_history_checkpoint() {
+                    ui.set_status(&format!("History checkpoint failed: {error}"));
+                    return;
+                }
                 ui.active_buffer()
                     .map(|buffer| rich_text::set_color(&buffer, None))
                     .unwrap_or(false)
             } else {
                 ui.color_mode.replace(Some(color_id.to_string()));
+                if let Err(error) = ui.record_history_checkpoint() {
+                    ui.set_status(&format!("History checkpoint failed: {error}"));
+                    return;
+                }
                 ui.active_buffer()
                     .map(|buffer| rich_text::set_color(&buffer, Some(color_id.as_str())))
                     .unwrap_or(false)
@@ -1971,7 +2154,7 @@ fn connect_actions(
     {
         let ui = Rc::clone(ui);
         new_button.connect_clicked(move |_| {
-            if let Err(error) = ui.create_note() {
+            if let Err(error) = ui.create_note(true) {
                 ui.set_status(&format!("Create failed: {error}"));
             }
         });
@@ -2014,8 +2197,30 @@ fn connect_actions(
     {
         let ui = Rc::clone(ui);
         let title_entry = ui.title_entry.clone();
+        let title_focus = gtk::EventControllerFocus::new();
+
+        {
+            let ui = Rc::clone(&ui);
+            title_focus.connect_leave(move |_| {
+                ui.title_history_pending.set(true);
+            });
+        }
+
+        title_entry.add_controller(title_focus);
 
         title_entry.connect_changed(move |_| {
+            if ui.loading_ui.get() {
+                return;
+            }
+
+            if ui.title_history_pending.replace(false) {
+                if let Err(error) = ui.record_history_checkpoint() {
+                    ui.set_status(&format!("History checkpoint failed: {error}"));
+                    ui.title_history_pending.set(true);
+                    return;
+                }
+            }
+
             ui.mark_dirty();
             ui.schedule_autosave();
         });
@@ -2074,6 +2279,11 @@ where
     let ui = Rc::clone(ui);
 
     button.connect_clicked(move |_| {
+        if let Err(error) = ui.record_history_checkpoint() {
+            ui.set_status(&format!("History checkpoint failed: {error}"));
+            return;
+        }
+
         if action(&ui) {
             ui.mark_dirty();
             if let Err(error) = ui.save_immediately("Formatting saved") {
@@ -2097,6 +2307,10 @@ where
         }
 
         let active = button.is_active();
+        if let Err(error) = ui.record_history_checkpoint() {
+            ui.set_status(&format!("History checkpoint failed: {error}"));
+            return;
+        }
         let changed_selection = action(&ui, active);
 
         if changed_selection {
