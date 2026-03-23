@@ -471,8 +471,14 @@ impl DriftUi {
 
         self.record_history_checkpoint()?;
         self.repository().reorder(source_id, target_id, place_after)?;
-        self.reload_notes(Some(source_id.clone()))?;
         self.set_status("Page order updated");
+        let ui = Rc::clone(self);
+        let selected_note = source_id.clone();
+        glib::idle_add_local_once(move || {
+            if let Err(error) = ui.reload_notes(Some(selected_note)) {
+                ui.set_status(&format!("Refresh failed: {error}"));
+            }
+        });
         Ok(())
     }
 
@@ -541,8 +547,19 @@ impl DriftUi {
     }
 
     fn clear_list_box(&self) {
-        while let Some(child) = self.list_box.first_child() {
-            self.list_box.remove(&child);
+        let mut children = Vec::new();
+        let mut current = self.list_box.first_child();
+
+        while let Some(child) = current {
+            let next = child.next_sibling();
+            children.push(child);
+            current = next;
+        }
+
+        for child in children {
+            if child.parent().as_ref() == Some(self.list_box.upcast_ref()) {
+                self.list_box.remove(&child);
+            }
         }
     }
 
