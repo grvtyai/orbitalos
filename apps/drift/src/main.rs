@@ -663,8 +663,8 @@ fn build_window(
     header_title.add_css_class("title-3");
 
     let header_logo = gtk::Image::from_file(drift_logo_path());
-    header_logo.set_pixel_size(36);
-    header_logo.set_size_request(36, 36);
+    header_logo.set_pixel_size(48);
+    header_logo.set_size_request(48, 48);
 
     let brand_box = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
