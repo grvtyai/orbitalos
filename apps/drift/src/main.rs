@@ -1497,7 +1497,6 @@ fn build_editor(ui: &Rc<DriftUi>) -> gtk::Box {
 
     let insert_position = Rc::new(RefCell::new((0_i32, 0_i32)));
 
-    ui.body_canvas_fixed.put(&ui.text_block_frame, 0.0, 0.0);
     ui.body_canvas_fixed.put(&ui.text_block_preview_frame, 0.0, 0.0);
     ui.apply_canvas_layout();
 
@@ -1519,10 +1518,10 @@ fn build_editor(ui: &Rc<DriftUi>) -> gtk::Box {
         let canvas_surface = ui.body_canvas_fixed.clone();
         let motion = gtk::EventControllerMotion::new();
         motion.connect_motion(move |controller, x, y| {
-            let cursor_name = if ui_for_motion.point_hits_text_block(x, y) {
+            let cursor_name = if ui_for_motion.point_hits_any_block(x, y) {
                 None
             } else {
-                Some("crosshair")
+                Some("cell")
             };
 
             let _ = controller;
@@ -1545,7 +1544,7 @@ fn build_editor(ui: &Rc<DriftUi>) -> gtk::Box {
         let click = gtk::GestureClick::new();
         click.set_button(1);
         click.connect_pressed(move |_, _, x, y| {
-            if ui_for_click.point_hits_text_block(x, y) {
+            if ui_for_click.point_hits_any_block(x, y) {
                 insert_popover.popdown();
                 return;
             }
@@ -1614,127 +1613,6 @@ fn connect_actions(
             ui.mark_dirty();
             ui.schedule_autosave();
         });
-    }
-
-    {
-        let ui = Rc::clone(ui);
-        let body_buffer = ui.body_buffer.clone();
-
-        body_buffer.connect_changed(move |_| {
-            ui.mark_dirty();
-            ui.schedule_autosave();
-        });
-    }
-
-    {
-        let ui = Rc::clone(ui);
-        let drag_handle = ui.text_block_drag_handle.clone();
-        let gesture = gtk::GestureDrag::new();
-        let drag_origin = Rc::new(RefCell::new(None::<block_layout::TextBlockLayout>));
-
-        {
-            let ui = Rc::clone(&ui);
-            let drag_origin = Rc::clone(&drag_origin);
-            gesture.connect_drag_begin(move |_, _, _| {
-                ui.begin_text_block_interaction();
-                drag_origin.replace(Some(ui.canvas_layout.borrow().text_block.clone()));
-            });
-        }
-
-        {
-            let ui = Rc::clone(&ui);
-            let drag_origin = Rc::clone(&drag_origin);
-            gesture.connect_drag_update(move |_, offset_x, offset_y| {
-                let Some(origin) = drag_origin.borrow().clone() else {
-                    return;
-                };
-
-                ui.update_text_block_layout(block_layout::TextBlockLayout {
-                    x: origin.x + offset_x.round() as i32,
-                    y: origin.y + offset_y.round() as i32,
-                    width: origin.width,
-                    height: origin.height,
-                });
-            });
-        }
-
-        {
-            let ui = Rc::clone(&ui);
-            gesture.connect_drag_end(move |_, _, _| {
-                ui.finalize_text_block_layout();
-                ui.finish_text_block_interaction();
-                ui.mark_dirty();
-                if let Err(error) = ui.save_immediately("Block position saved") {
-                    ui.set_status(&format!("Layout save failed: {error}"));
-                }
-            });
-        }
-
-        drag_handle.add_controller(gesture);
-    }
-
-    {
-        let ui = Rc::clone(ui);
-        let resize_handle = ui.text_block_resize_handle.clone();
-        let gesture = gtk::GestureDrag::new();
-        let resize_origin = Rc::new(RefCell::new(None::<block_layout::TextBlockLayout>));
-
-        {
-            let ui = Rc::clone(&ui);
-            let resize_origin = Rc::clone(&resize_origin);
-            gesture.connect_drag_begin(move |_, _, _| {
-                ui.begin_text_block_interaction();
-                resize_origin.replace(Some(ui.canvas_layout.borrow().text_block.clone()));
-            });
-        }
-
-        {
-            let ui = Rc::clone(&ui);
-            let resize_origin = Rc::clone(&resize_origin);
-            gesture.connect_drag_update(move |_, offset_x, offset_y| {
-                let Some(origin) = resize_origin.borrow().clone() else {
-                    return;
-                };
-
-                ui.update_text_block_layout(block_layout::TextBlockLayout {
-                    x: origin.x,
-                    y: origin.y,
-                    width: origin.width + offset_x.round() as i32,
-                    height: origin.height + offset_y.round() as i32,
-                });
-            });
-        }
-
-        {
-            let ui = Rc::clone(&ui);
-            gesture.connect_drag_end(move |_, _, _| {
-                ui.finalize_text_block_layout();
-                ui.finish_text_block_interaction();
-                ui.mark_dirty();
-                if let Err(error) = ui.save_immediately("Block size saved") {
-                    ui.set_status(&format!("Layout save failed: {error}"));
-                }
-            });
-        }
-
-        resize_handle.add_controller(gesture);
-    }
-
-    {
-        let hover = gtk::EventControllerMotion::new();
-        let ui_for_enter = Rc::clone(ui);
-        hover.connect_enter(move |_, _, _| {
-            ui_for_enter.text_block_hovered.set(true);
-            ui_for_enter.sync_text_block_chrome();
-        });
-
-        let ui_for_leave = Rc::clone(ui);
-        hover.connect_leave(move |_| {
-            ui_for_leave.text_block_hovered.set(false);
-            ui_for_leave.sync_text_block_chrome();
-        });
-
-        ui.text_block_frame.add_controller(hover);
     }
 
     {
