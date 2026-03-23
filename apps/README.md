@@ -4,7 +4,7 @@ This directory contains the OrbitalOS application crates.
 
 ## Planned Apps
 
-- `drift/` Notes
+- [`drift/`](drift/README.md) Notes
 - `vlink/` Snapshot
 - `prism/` Viewer
 - `vector/` Planner
@@ -16,3 +16,7 @@ This directory contains the OrbitalOS application crates.
 
 `drift/` is the first app target for Phase 1.3 and will become the first GTK4 +
 Libadwaita application built on top of `orbital-core`.
+
+Current app docs:
+
+- [`Drift README`](drift/README.md)
