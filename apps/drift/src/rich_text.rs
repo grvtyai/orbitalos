@@ -47,6 +47,7 @@ pub struct PendingFormat {
     pub italic: bool,
     pub underline: bool,
     pub strikethrough: bool,
+    pub heading_1: bool,
     pub color: Option<String>,
 }
 
@@ -69,6 +70,7 @@ impl PendingFormat {
             && !self.italic
             && !self.underline
             && !self.strikethrough
+            && !self.heading_1
             && self.color.is_none()
     }
 }
@@ -198,6 +200,7 @@ pub fn clear_formatting(buffer: &TextBuffer) -> bool {
     buffer.remove_tag_by_name(TAG_ITALIC, &start, &end);
     buffer.remove_tag_by_name(TAG_UNDERLINE, &start, &end);
     buffer.remove_tag_by_name(TAG_STRIKETHROUGH, &start, &end);
+    buffer.remove_tag_by_name(TAG_HEADING_1, &start, &end);
     remove_color_tags(buffer, &start, &end);
     true
 }

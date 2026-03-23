@@ -581,6 +581,7 @@ impl DriftUi {
             italic: self.italic_mode.get(),
             underline: self.underline_mode.get(),
             strikethrough: self.strikethrough_mode.get(),
+            heading_1: false,
             color: self.color_mode.borrow().clone(),
         }
     }
