@@ -102,7 +102,7 @@ struct TextBlockWidget {
     frame: gtk::Fixed,
     editor_frame: gtk::Frame,
     drag_handle: gtk::Box,
-    resize_handle: gtk::Label,
+    resize_handle: gtk::Frame,
     buffer: gtk::TextBuffer,
     view: gtk::TextView,
     layout: RefCell<block_layout::TextBlockLayout>,
@@ -443,7 +443,6 @@ impl DriftUi {
             .set_size_request(layout.width, layout.height + BLOCK_CHROME_TOP + BLOCK_CHROME_BOTTOM);
         widget.editor_frame.set_size_request(layout.width, layout.height);
         widget.drag_handle.set_size_request(layout.width, BLOCK_CHROME_TOP);
-        widget.resize_handle.set_size_request(layout.width, BLOCK_CHROME_BOTTOM);
         widget
             .frame
             .move_(&widget.drag_handle, 0.0, 0.0);
@@ -806,33 +805,51 @@ fn build_text_block_widget(
         .margin_start(4)
         .margin_end(4)
         .build();
-    drag_handle.add_css_class("toolbar");
+    drag_handle.set_halign(gtk::Align::Fill);
 
     let block_title = gtk::Label::builder()
         .label("Text block")
         .xalign(0.0)
-        .hexpand(true)
         .build();
     block_title.add_css_class("heading");
     let block_hint = gtk::Label::builder()
         .label("Drag")
-        .xalign(1.0)
         .build();
     block_hint.add_css_class("dim-label");
-    drag_handle.append(&block_title);
-    drag_handle.append(&block_hint);
-    drag_handle.set_opacity(0.0);
-    drag_handle.add_css_class("card");
 
-    let resize_handle = gtk::Label::builder()
+    let block_title_chip = gtk::Frame::new(None);
+    block_title_chip.set_child(Some(&block_title));
+    block_title_chip.add_css_class("card");
+    block_title_chip.set_margin_start(2);
+    block_title_chip.set_margin_top(2);
+    block_title_chip.set_margin_bottom(2);
+
+    let block_hint_chip = gtk::Frame::new(None);
+    block_hint_chip.set_child(Some(&block_hint));
+    block_hint_chip.add_css_class("card");
+    block_hint_chip.set_margin_end(2);
+    block_hint_chip.set_margin_top(2);
+    block_hint_chip.set_margin_bottom(2);
+
+    let drag_spacer = gtk::Box::builder().hexpand(true).build();
+    drag_handle.append(&block_title_chip);
+    drag_handle.append(&drag_spacer);
+    drag_handle.append(&block_hint_chip);
+    drag_handle.set_opacity(0.0);
+
+    let resize_label = gtk::Label::builder()
         .label("Resize")
         .halign(gtk::Align::End)
-        .margin_top(6)
-        .margin_bottom(8)
-        .margin_end(10)
         .build();
-    resize_handle.add_css_class("dim-label");
+    resize_label.add_css_class("dim-label");
+
+    let resize_handle = gtk::Frame::new(None);
+    resize_handle.set_child(Some(&resize_label));
     resize_handle.add_css_class("card");
+    resize_handle.set_halign(gtk::Align::End);
+    resize_handle.set_margin_end(6);
+    resize_handle.set_margin_top(2);
+    resize_handle.set_margin_bottom(2);
     resize_handle.set_opacity(0.0);
 
     let scroller = gtk::ScrolledWindow::builder()
