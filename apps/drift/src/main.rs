@@ -17,6 +17,7 @@ mod settings;
 const AUTOSAVE_DELAY_MS: u64 = 900;
 const BLOCK_CHROME_TOP: i32 = 28;
 const BLOCK_CHROME_BOTTOM: i32 = 24;
+const MAX_UNDO_STEPS: usize = 100;
 
 fn main() {
     adw::init().expect("Failed to initialize Libadwaita");
@@ -106,8 +107,18 @@ struct TextBlockWidget {
     buffer: gtk::TextBuffer,
     view: gtk::TextView,
     layout: RefCell<block_layout::TextBlockLayout>,
+    undo_stack: RefCell<Vec<EditorSnapshot>>,
+    redo_stack: RefCell<Vec<EditorSnapshot>>,
+    last_snapshot: RefCell<EditorSnapshot>,
+    restoring_history: Cell<bool>,
     hovered: Cell<bool>,
     interacting: Cell<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EditorSnapshot {
+    plain_text: String,
+    markup: Option<String>,
 }
 
 impl DriftUi {
@@ -118,6 +129,14 @@ impl DriftUi {
         let database = OrbitalDatabase::open(&paths)?;
 
         let new_button = gtk::Button::builder().label("New Page").build();
+        let undo_button = gtk::Button::builder()
+            .icon_name("edit-undo-symbolic")
+            .tooltip_text("Undo")
+            .build();
+        let redo_button = gtk::Button::builder()
+            .icon_name("edit-redo-symbolic")
+            .tooltip_text("Redo")
+            .build();
         let edit_button = gtk::ToggleButton::builder().label("Edit").build();
 
         let list_box = gtk::ListBox::builder()
@@ -202,8 +221,24 @@ impl DriftUi {
             .tooltip_text("Settings")
             .build();
 
-        let window = build_window(app, &ui, &new_button, &edit_button, &settings_button);
-        connect_actions(&ui, &new_button, &edit_button, &settings_button, &window);
+        let window = build_window(
+            app,
+            &ui,
+            &new_button,
+            &undo_button,
+            &redo_button,
+            &edit_button,
+            &settings_button,
+        );
+        connect_actions(
+            &ui,
+            &new_button,
+            &undo_button,
+            &redo_button,
+            &edit_button,
+            &settings_button,
+            &window,
+        );
         ui.reload_notes(None)?;
 
         if ui.notes.borrow().is_empty() {
@@ -680,6 +715,135 @@ impl DriftUi {
         self.active_text_block().map(|widget| widget.buffer.clone())
     }
 
+    fn apply_paragraph_style(
+        &self,
+        style: rich_text::ParagraphStyle,
+        success_message: &str,
+    ) -> orbital_core::OrbitalResult<bool> {
+        let Some(buffer) = self.active_buffer() else {
+            return Ok(false);
+        };
+
+        let changed = rich_text::set_paragraph_style(&buffer, style);
+        if changed {
+            self.mark_dirty();
+            self.save_immediately(success_message)?;
+        }
+
+        Ok(changed)
+    }
+
+    fn apply_checklist(&self) -> orbital_core::OrbitalResult<bool> {
+        let Some(buffer) = self.active_buffer() else {
+            return Ok(false);
+        };
+
+        let changed = insert_checklist(&buffer);
+        if changed {
+            self.mark_dirty();
+            self.save_immediately("Checklist saved")?;
+        }
+
+        Ok(changed)
+    }
+
+    fn handle_undo(&self) -> orbital_core::OrbitalResult<bool> {
+        let Some(widget) = self.active_text_block() else {
+            return Ok(false);
+        };
+
+        let Some(snapshot) = widget.undo_stack.borrow_mut().pop() else {
+            self.set_status("Nothing to undo");
+            return Ok(false);
+        };
+
+        widget
+            .redo_stack
+            .borrow_mut()
+            .push(capture_snapshot(&widget.buffer));
+        apply_snapshot_to_widget(&widget, &snapshot);
+        self.mark_dirty();
+        self.save_immediately("Undo applied")?;
+        Ok(true)
+    }
+
+    fn handle_redo(&self) -> orbital_core::OrbitalResult<bool> {
+        let Some(widget) = self.active_text_block() else {
+            return Ok(false);
+        };
+
+        let Some(snapshot) = widget.redo_stack.borrow_mut().pop() else {
+            self.set_status("Nothing to redo");
+            return Ok(false);
+        };
+
+        widget
+            .undo_stack
+            .borrow_mut()
+            .push(capture_snapshot(&widget.buffer));
+        apply_snapshot_to_widget(&widget, &snapshot);
+        self.mark_dirty();
+        self.save_immediately("Redo applied")?;
+        Ok(true)
+    }
+
+    fn handle_shortcut(
+        &self,
+        keyval: gtk::gdk::Key,
+        state: gtk::gdk::ModifierType,
+    ) -> orbital_core::OrbitalResult<bool> {
+        let control = state.contains(gtk::gdk::ModifierType::CONTROL_MASK);
+        let shift = state.contains(gtk::gdk::ModifierType::SHIFT_MASK);
+
+        if !control {
+            return Ok(false);
+        }
+
+        match keyval.to_unicode().map(|ch| ch.to_ascii_lowercase()) {
+            Some('z') if shift => self.handle_redo(),
+            Some('z') => self.handle_undo(),
+            Some('y') => self.handle_redo(),
+            Some('b') => self.apply_inline_shortcut(|buffer| rich_text::set_bold(&buffer, true)),
+            Some('i') => self.apply_inline_shortcut(|buffer| rich_text::set_italic(&buffer, true)),
+            Some('u') => self.apply_inline_shortcut(|buffer| rich_text::set_underline(&buffer, true)),
+            Some('1') => self.apply_paragraph_style(rich_text::ParagraphStyle::Heading1, "Heading saved"),
+            Some('0') => self.apply_paragraph_style(rich_text::ParagraphStyle::Normal, "Paragraph saved"),
+            Some('7') => {
+                let Some(buffer) = self.active_buffer() else {
+                    return Ok(false);
+                };
+                let changed = if shift {
+                    insert_checklist(&buffer)
+                } else {
+                    insert_bullet_list(&buffer)
+                };
+                if changed {
+                    self.mark_dirty();
+                    self.save_immediately("List saved")?;
+                }
+                Ok(changed)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    fn apply_inline_shortcut<F>(&self, action: F) -> orbital_core::OrbitalResult<bool>
+    where
+        F: FnOnce(gtk::TextBuffer) -> bool,
+    {
+        let Some(buffer) = self.active_buffer() else {
+            return Ok(false);
+        };
+
+        let changed = action(buffer);
+        if changed {
+            self.mark_dirty();
+            self.save_immediately("Formatting saved")?;
+        }
+
+        Ok(changed)
+    }
+
     fn snapshot_layout(&self) -> block_layout::NoteCanvasLayout {
         let blocks = self
             .text_blocks
@@ -872,6 +1036,8 @@ fn build_text_block_widget(
         (BLOCK_CHROME_TOP + block.height) as f64,
     );
 
+    let initial_snapshot = capture_snapshot(&buffer);
+
     let widget = Rc::new(TextBlockWidget {
         id: block.id.clone(),
         frame,
@@ -881,6 +1047,10 @@ fn build_text_block_widget(
         buffer,
         view,
         layout: RefCell::new(block.layout()),
+        undo_stack: RefCell::new(Vec::new()),
+        redo_stack: RefCell::new(Vec::new()),
+        last_snapshot: RefCell::new(initial_snapshot),
+        restoring_history: Cell::new(false),
         hovered: Cell::new(false),
         interacting: Cell::new(false),
     });
@@ -932,10 +1102,65 @@ fn build_text_block_widget(
         let ui = Rc::clone(ui);
         let widget_for_change = Rc::clone(&widget);
         widget.buffer.connect_changed(move |_| {
+            if widget_for_change.restoring_history.get() {
+                return;
+            }
+
             ui.set_active_block(Some(widget_for_change.id.clone()));
             ui.mark_dirty();
             ui.schedule_autosave();
         });
+    }
+
+    {
+        let widget_for_history = Rc::clone(&widget);
+        widget.buffer.connect_begin_user_action(move |_| {
+            if widget_for_history.restoring_history.get() {
+                return;
+            }
+
+            let snapshot = widget_for_history.last_snapshot.borrow().clone();
+            let mut undo_stack = widget_for_history.undo_stack.borrow_mut();
+            undo_stack.push(snapshot);
+            if undo_stack.len() > MAX_UNDO_STEPS {
+                undo_stack.remove(0);
+            }
+            widget_for_history.redo_stack.borrow_mut().clear();
+        });
+    }
+
+    {
+        let widget_for_history = Rc::clone(&widget);
+        widget.buffer.connect_end_user_action(move |buffer| {
+            if widget_for_history.restoring_history.get() {
+                return;
+            }
+
+            widget_for_history
+                .last_snapshot
+                .replace(capture_snapshot(buffer));
+        });
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        let widget_for_key = Rc::clone(&widget);
+        let key = gtk::EventControllerKey::new();
+        key.connect_key_pressed(move |_, keyval, _, state| {
+            ui.set_active_block(Some(widget_for_key.id.clone()));
+
+            if keyval == gtk::gdk::Key::Return
+                && !state.contains(gtk::gdk::ModifierType::SHIFT_MASK)
+                && continue_list_or_checklist(&widget_for_key.buffer)
+            {
+                ui.mark_dirty();
+                ui.schedule_autosave();
+                return glib::Propagation::Stop;
+            }
+
+            glib::Propagation::Proceed
+        });
+        widget.view.add_controller(key);
     }
 
     {
@@ -1069,6 +1294,8 @@ fn build_window(
     app: &adw::Application,
     ui: &Rc<DriftUi>,
     new_button: &gtk::Button,
+    undo_button: &gtk::Button,
+    redo_button: &gtk::Button,
     edit_button: &gtk::ToggleButton,
     settings_button: &gtk::Button,
 ) -> adw::ApplicationWindow {
@@ -1108,6 +1335,8 @@ fn build_window(
 
     header_bar.pack_start(&brand_frame);
     header_bar.pack_start(new_button);
+    header_bar.pack_start(undo_button);
+    header_bar.pack_start(redo_button);
     header_bar.pack_start(edit_button);
     header_bar.pack_end(settings_button);
     header_bar.set_title_widget(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
@@ -1283,6 +1512,10 @@ fn build_formatting_toolbar(ui: &Rc<DriftUi>) -> gtk::Box {
         .orientation(gtk::Orientation::Horizontal)
         .spacing(6)
         .build();
+    let paragraph_group = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(6)
+        .build();
     let insert_group = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
         .spacing(6)
@@ -1297,7 +1530,10 @@ fn build_formatting_toolbar(ui: &Rc<DriftUi>) -> gtk::Box {
     let underline_button = gtk::ToggleButton::new();
     let strike_button = gtk::ToggleButton::new();
     let clear_button = gtk::Button::with_label("Clear");
+    let paragraph_label = gtk::Label::builder().label("Style").xalign(0.0).build();
+    let paragraph_combo = gtk::ComboBoxText::new();
     let bullet_button = gtk::Button::with_label("List");
+    let checklist_button = gtk::Button::with_label("Checklist");
     let color_label = gtk::Label::builder().label("Color").xalign(0.0).build();
     let color_combo = gtk::ComboBoxText::new();
 
@@ -1306,7 +1542,11 @@ fn build_formatting_toolbar(ui: &Rc<DriftUi>) -> gtk::Box {
     underline_button.add_css_class("pill");
     strike_button.add_css_class("pill");
     clear_button.add_css_class("pill");
+    checklist_button.add_css_class("pill");
     bullet_button.add_css_class("pill");
+    paragraph_combo.append(Some("normal"), "Normal");
+    paragraph_combo.append(Some("heading1"), "Heading 1");
+    paragraph_combo.set_active_id(Some("normal"));
     color_combo.append(Some("default"), "Default");
     color_combo.append(Some("red"), "Red");
     color_combo.append(Some("blue"), "Blue");
@@ -1373,6 +1613,37 @@ fn build_formatting_toolbar(ui: &Rc<DriftUi>) -> gtk::Box {
             .map(|buffer| insert_bullet_list(&buffer))
             .unwrap_or(false)
     });
+    {
+        let ui = Rc::clone(ui);
+        checklist_button.connect_clicked(move |_| {
+            if let Err(error) = ui.apply_checklist() {
+                ui.set_status(&format!("Checklist failed: {error}"));
+            }
+        });
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        paragraph_combo.connect_changed(move |combo| {
+            let style = match combo.active_id().as_deref() {
+                Some("heading1") => rich_text::ParagraphStyle::Heading1,
+                _ => rich_text::ParagraphStyle::Normal,
+            };
+
+            let result = match style {
+                rich_text::ParagraphStyle::Heading1 => {
+                    ui.apply_paragraph_style(style, "Heading saved")
+                }
+                rich_text::ParagraphStyle::Normal => {
+                    ui.apply_paragraph_style(style, "Paragraph saved")
+                }
+            };
+
+            if let Err(error) = result {
+                ui.set_status(&format!("Paragraph style failed: {error}"));
+            }
+        });
+    }
 
     {
         let ui = Rc::clone(ui);
@@ -1410,12 +1681,18 @@ fn build_formatting_toolbar(ui: &Rc<DriftUi>) -> gtk::Box {
     style_group.append(&strike_button);
     style_group.append(&clear_button);
 
+    paragraph_group.append(&paragraph_label);
+    paragraph_group.append(&paragraph_combo);
+
     insert_group.append(&bullet_button);
+    insert_group.append(&checklist_button);
 
     color_group.append(&color_label);
     color_group.append(&color_combo);
 
     toolbar.append(&style_group);
+    toolbar.append(&gtk::Separator::builder().orientation(gtk::Orientation::Vertical).build());
+    toolbar.append(&paragraph_group);
     toolbar.append(&gtk::Separator::builder().orientation(gtk::Orientation::Vertical).build());
     toolbar.append(&insert_group);
     toolbar.append(&gtk::Separator::builder().orientation(gtk::Orientation::Vertical).build());
@@ -1684,6 +1961,8 @@ fn build_editor(ui: &Rc<DriftUi>) -> gtk::Box {
 fn connect_actions(
     ui: &Rc<DriftUi>,
     new_button: &gtk::Button,
+    undo_button: &gtk::Button,
+    redo_button: &gtk::Button,
     edit_button: &gtk::ToggleButton,
     settings_button: &gtk::Button,
     window: &adw::ApplicationWindow,
@@ -1701,6 +1980,24 @@ fn connect_actions(
         let ui = Rc::clone(ui);
         edit_button.connect_toggled(move |button| {
             ui.edit_revealer.set_reveal_child(button.is_active());
+        });
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        undo_button.connect_clicked(move |_| {
+            if let Err(error) = ui.handle_undo() {
+                ui.set_status(&format!("Undo failed: {error}"));
+            }
+        });
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        redo_button.connect_clicked(move |_| {
+            if let Err(error) = ui.handle_redo() {
+                ui.set_status(&format!("Redo failed: {error}"));
+            }
         });
     }
 
@@ -1752,6 +2049,20 @@ fn connect_actions(
 
             glib::Propagation::Proceed
         });
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        let key = gtk::EventControllerKey::new();
+        key.connect_key_pressed(move |_, keyval, _, state| match ui.handle_shortcut(keyval, state) {
+            Ok(true) => glib::Propagation::Stop,
+            Ok(false) => glib::Propagation::Proceed,
+            Err(error) => {
+                ui.set_status(&format!("Shortcut failed: {error}"));
+                glib::Propagation::Stop
+            }
+        });
+        window.add_controller(key);
     }
 }
 
@@ -1808,29 +2119,155 @@ fn styled_toolbar_label(markup: &str) -> gtk::Label {
 }
 
 fn insert_bullet_list(buffer: &gtk::TextBuffer) -> bool {
-    let Some((mut start, end)) = buffer.selection_bounds() else {
+    if insert_line_prefix_on_empty_line(buffer, "- ") {
+        return true;
+    }
+
+    transform_selected_lines(buffer, |line| {
+        if line.trim().is_empty() {
+            String::new()
+        } else if line.trim_start().starts_with("- ") {
+            line.to_string()
+        } else {
+            format!("- {line}")
+        }
+    })
+}
+
+fn insert_checklist(buffer: &gtk::TextBuffer) -> bool {
+    if insert_line_prefix_on_empty_line(buffer, "- [ ] ") {
+        return true;
+    }
+
+    transform_selected_lines(buffer, |line| {
+        if line.trim().is_empty() {
+            String::new()
+        } else if line.trim_start().starts_with("- [ ] ") || line.trim_start().starts_with("- [x] ") {
+            line.to_string()
+        } else {
+            format!("- [ ] {line}")
+        }
+    })
+}
+
+fn continue_list_or_checklist(buffer: &gtk::TextBuffer) -> bool {
+    let insert_mark = buffer.get_insert();
+    let insert = buffer.iter_at_mark(&insert_mark);
+    let mut line_start = insert;
+    line_start.set_line_offset(0);
+    let mut line_end = line_start;
+    line_end.forward_to_line_end();
+    let current_line = buffer.text(&line_start, &line_end, true).to_string();
+
+    let continuation = if let Some(rest) = current_line.strip_prefix("- [ ] ") {
+        if rest.trim().is_empty() {
+            Some(String::new())
+        } else {
+            Some("\n- [ ] ".to_string())
+        }
+    } else if let Some(rest) = current_line.strip_prefix("- [x] ") {
+        if rest.trim().is_empty() {
+            Some(String::new())
+        } else {
+            Some("\n- [ ] ".to_string())
+        }
+    } else if let Some(rest) = current_line.strip_prefix("- ") {
+        if rest.trim().is_empty() {
+            Some(String::new())
+        } else {
+            Some("\n- ".to_string())
+        }
+    } else {
+        None
+    };
+
+    let Some(insert_text) = continuation else {
         return false;
     };
 
-    let selected_text = buffer.text(&start, &end, true).to_string();
+    buffer.begin_user_action();
+    let mut insert_at = buffer.iter_at_mark(&insert_mark);
+    if insert_text.is_empty() {
+        let mut delete_start = line_start;
+        let mut delete_end = line_end;
+        buffer.delete(&mut delete_start, &mut delete_end);
+    } else {
+        buffer.insert(&mut insert_at, &insert_text);
+    }
+    buffer.end_user_action();
+    true
+}
 
+fn insert_line_prefix_on_empty_line(buffer: &gtk::TextBuffer, prefix: &str) -> bool {
+    if buffer.selection_bounds().is_some() {
+        return false;
+    }
+
+    let insert_mark = buffer.get_insert();
+    let mut line_start = buffer.iter_at_mark(&insert_mark);
+    line_start.set_line_offset(0);
+    let mut line_end = line_start;
+    line_end.forward_to_line_end();
+    let current_line = buffer.text(&line_start, &line_end, true).to_string();
+
+    if !current_line.trim().is_empty() {
+        return false;
+    }
+
+    buffer.begin_user_action();
+    buffer.insert(&mut line_start, prefix);
+    buffer.end_user_action();
+    true
+}
+
+fn transform_selected_lines<F>(buffer: &gtk::TextBuffer, transform: F) -> bool
+where
+    F: Fn(&str) -> String,
+{
+    let (mut start, end) = if let Some((start, end)) = buffer.selection_bounds() {
+        (start, end)
+    } else {
+        let insert_mark = buffer.get_insert();
+        let mut start = buffer.iter_at_mark(&insert_mark);
+        start.set_line_offset(0);
+        let mut end = start;
+        end.forward_to_line_end();
+        (start, end)
+    };
+
+    let selected_text = buffer.text(&start, &end, true).to_string();
     if selected_text.trim().is_empty() {
         return false;
     }
 
-    let bulleted = selected_text
+    let transformed = selected_text
         .lines()
-        .map(|line| format!("- {line}"))
+        .map(transform)
         .collect::<Vec<_>>()
         .join("\n");
 
     buffer.begin_user_action();
-    let mut delete_end = end.clone();
+    let mut delete_end = end;
     buffer.delete(&mut start, &mut delete_end);
-    buffer.insert(&mut start, &bulleted);
+    buffer.insert(&mut start, &transformed);
     buffer.end_user_action();
-
     true
+}
+
+fn capture_snapshot(buffer: &gtk::TextBuffer) -> EditorSnapshot {
+    EditorSnapshot {
+        plain_text: buffer
+            .text(&buffer.start_iter(), &buffer.end_iter(), true)
+            .to_string(),
+        markup: rich_text::serialize_buffer(buffer),
+    }
+}
+
+fn apply_snapshot_to_widget(widget: &TextBlockWidget, snapshot: &EditorSnapshot) {
+    widget.restoring_history.set(true);
+    rich_text::set_buffer_content(&widget.buffer, &snapshot.plain_text, snapshot.markup.as_deref());
+    widget.last_snapshot.replace(snapshot.clone());
+    widget.restoring_history.set(false);
 }
 
 fn build_note_row(note: &NoteSummary) -> gtk::ListBoxRow {

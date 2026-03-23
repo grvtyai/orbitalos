@@ -7,6 +7,7 @@ const TAG_BOLD: &str = "format-bold";
 const TAG_ITALIC: &str = "format-italic";
 const TAG_UNDERLINE: &str = "format-underline";
 const TAG_STRIKETHROUGH: &str = "format-strikethrough";
+const TAG_HEADING_1: &str = "format-heading-1";
 const TAG_COLOR_RED: &str = "format-color-red";
 const TAG_COLOR_BLUE: &str = "format-color-blue";
 const TAG_COLOR_GREEN: &str = "format-color-green";
@@ -26,6 +27,7 @@ struct RichTextSpan {
     italic: bool,
     underline: bool,
     strikethrough: bool,
+    heading_1: bool,
     color: Option<String>,
 }
 
@@ -35,6 +37,7 @@ struct TextStyle {
     italic: bool,
     underline: bool,
     strikethrough: bool,
+    heading_1: bool,
     color: Option<String>,
 }
 
@@ -54,6 +57,7 @@ impl TextStyle {
             italic: false,
             underline: false,
             strikethrough: false,
+            heading_1: false,
             color: None,
         }
     }
@@ -82,6 +86,15 @@ pub fn create_buffer() -> TextBuffer {
     buffer.create_tag(
         Some(TAG_STRIKETHROUGH),
         &[("strikethrough", &true)],
+    );
+    buffer.create_tag(
+        Some(TAG_HEADING_1),
+        &[
+            ("weight", &700i32),
+            ("scale", &1.28f64),
+            ("pixels-above-lines", &8i32),
+            ("pixels-below-lines", &4i32),
+        ],
     );
     buffer.create_tag(
         Some(TAG_COLOR_RED),
@@ -127,7 +140,14 @@ pub fn serialize_buffer(buffer: &TextBuffer) -> Option<String> {
 
     if spans
         .iter()
-        .all(|span| !span.bold && !span.italic && !span.underline && !span.strikethrough && span.color.is_none())
+        .all(|span| {
+            !span.bold
+                && !span.italic
+                && !span.underline
+                && !span.strikethrough
+                && !span.heading_1
+                && span.color.is_none()
+        })
     {
         return None;
     }
@@ -149,6 +169,24 @@ pub fn set_underline(buffer: &TextBuffer, active: bool) -> bool {
 
 pub fn set_strikethrough(buffer: &TextBuffer, active: bool) -> bool {
     set_named_tag(buffer, TAG_STRIKETHROUGH, active)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParagraphStyle {
+    Normal,
+    Heading1,
+}
+
+pub fn set_paragraph_style(buffer: &TextBuffer, style: ParagraphStyle) -> bool {
+    let (start, end) = selected_or_current_line_bounds(buffer);
+
+    buffer.remove_tag_by_name(TAG_HEADING_1, &start, &end);
+
+    if matches!(style, ParagraphStyle::Heading1) {
+        buffer.apply_tag_by_name(TAG_HEADING_1, &start, &end);
+    }
+
+    true
 }
 
 pub fn clear_formatting(buffer: &TextBuffer) -> bool {
@@ -215,6 +253,10 @@ pub fn apply_pending_format_by_offsets(
         buffer.apply_tag_by_name(TAG_STRIKETHROUGH, &start, &end);
     }
 
+    if format.heading_1 {
+        buffer.apply_tag_by_name(TAG_HEADING_1, &start, &end);
+    }
+
     if let Some(color) = &format.color {
         if let Some((tag_name, _)) = COLOR_TAGS.iter().find(|(_, value)| value == color) {
             buffer.apply_tag_by_name(tag_name, &start, &end);
@@ -241,6 +283,7 @@ fn clear_style_range(buffer: &TextBuffer, start: &gtk::TextIter, end: &gtk::Text
     buffer.remove_tag_by_name(TAG_ITALIC, start, end);
     buffer.remove_tag_by_name(TAG_UNDERLINE, start, end);
     buffer.remove_tag_by_name(TAG_STRIKETHROUGH, start, end);
+    buffer.remove_tag_by_name(TAG_HEADING_1, start, end);
     remove_color_tags(buffer, start, end);
 }
 
@@ -273,6 +316,10 @@ fn insert_spans(buffer: &TextBuffer, spans: &[RichTextSpan]) {
 
         if span.strikethrough {
             buffer.apply_tag_by_name(TAG_STRIKETHROUGH, &start, &end);
+        }
+
+        if span.heading_1 {
+            buffer.apply_tag_by_name(TAG_HEADING_1, &start, &end);
         }
 
         if let Some(color) = &span.color {
@@ -313,6 +360,7 @@ fn collect_spans(buffer: &TextBuffer) -> Vec<RichTextSpan> {
                 italic: current_style.italic,
                 underline: current_style.underline,
                 strikethrough: current_style.strikethrough,
+                heading_1: current_style.heading_1,
                 color: current_style.color.clone(),
             });
             current_text = String::new();
@@ -330,6 +378,7 @@ fn collect_spans(buffer: &TextBuffer) -> Vec<RichTextSpan> {
             italic: current_style.italic,
             underline: current_style.underline,
             strikethrough: current_style.strikethrough,
+            heading_1: current_style.heading_1,
             color: current_style.color.clone(),
         });
     }
@@ -359,6 +408,10 @@ fn style_at_iter(buffer: &TextBuffer, iter: &gtk::TextIter) -> TextStyle {
         style.strikethrough = iter.has_tag(&tag);
     }
 
+    if let Some(tag) = buffer.tag_table().lookup(TAG_HEADING_1) {
+        style.heading_1 = iter.has_tag(&tag);
+    }
+
     for (tag_name, color) in COLOR_TAGS {
         if let Some(tag) = buffer.tag_table().lookup(tag_name) {
             if iter.has_tag(&tag) {
@@ -369,4 +422,21 @@ fn style_at_iter(buffer: &TextBuffer, iter: &gtk::TextIter) -> TextStyle {
     }
 
     style
+}
+
+fn selected_or_current_line_bounds(buffer: &TextBuffer) -> (gtk::TextIter, gtk::TextIter) {
+    if let Some((mut start, mut end)) = buffer.selection_bounds() {
+        start.set_line_offset(0);
+        if !end.ends_line() {
+            end.forward_to_line_end();
+        }
+        (start, end)
+    } else {
+        let insert_mark = buffer.get_insert();
+        let mut start = buffer.iter_at_mark(&insert_mark);
+        start.set_line_offset(0);
+        let mut end = start;
+        end.forward_to_line_end();
+        (start, end)
+    }
 }
