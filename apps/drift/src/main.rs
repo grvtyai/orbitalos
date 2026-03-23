@@ -210,7 +210,7 @@ impl DriftUi {
         Ok(window)
     }
 
-    fn reload_notes(&self, preferred_note: Option<NoteId>) -> orbital_core::OrbitalResult<()> {
+    fn reload_notes(self: &Rc<Self>, preferred_note: Option<NoteId>) -> orbital_core::OrbitalResult<()> {
         let repository = self.repository();
         let notes = repository.list_active()?;
         let selection = preferred_note.or_else(|| self.selected_note_id.borrow().clone());
@@ -245,7 +245,7 @@ impl DriftUi {
         Ok(())
     }
 
-    fn create_note(&self) -> orbital_core::OrbitalResult<()> {
+    fn create_note(self: &Rc<Self>) -> orbital_core::OrbitalResult<()> {
         let repository = self.repository();
         let mut new_note = NewNote::new(generate_note_id(), "Untitled page", "");
         new_note.body_layout = block_layout::serialize_layout(&block_layout::default_note_canvas_layout(
@@ -287,7 +287,7 @@ impl DriftUi {
         Ok(())
     }
 
-    fn load_note_into_editor(&self, index: usize) -> orbital_core::OrbitalResult<()> {
+    fn load_note_into_editor(self: &Rc<Self>, index: usize) -> orbital_core::OrbitalResult<()> {
         let Some(summary) = self.notes.borrow().get(index).cloned() else {
             return Ok(());
         };
@@ -763,6 +763,269 @@ impl DriftUi {
     }
 }
 
+fn build_text_block_widget(
+    ui: &Rc<DriftUi>,
+    block: &block_layout::TextBlockState,
+) -> Rc<TextBlockWidget> {
+    let buffer = rich_text::create_buffer();
+    rich_text::set_buffer_content(&buffer, &block.body, block.body_markup.as_deref());
+
+    let view = gtk::TextView::builder()
+        .buffer(&buffer)
+        .wrap_mode(gtk::WrapMode::WordChar)
+        .top_margin(12)
+        .bottom_margin(12)
+        .left_margin(12)
+        .right_margin(12)
+        .monospace(false)
+        .vexpand(true)
+        .build();
+
+    let drag_handle = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(8)
+        .margin_top(8)
+        .margin_bottom(8)
+        .margin_start(12)
+        .margin_end(12)
+        .build();
+    drag_handle.add_css_class("toolbar");
+
+    let block_title = gtk::Label::builder()
+        .label("Text block")
+        .xalign(0.0)
+        .hexpand(true)
+        .build();
+    block_title.add_css_class("heading");
+    let block_hint = gtk::Label::builder()
+        .label("Drag here")
+        .xalign(1.0)
+        .build();
+    block_hint.add_css_class("dim-label");
+    drag_handle.append(&block_title);
+    drag_handle.append(&block_hint);
+    drag_handle.set_opacity(0.0);
+
+    let resize_handle = gtk::Label::builder()
+        .label("Resize")
+        .halign(gtk::Align::End)
+        .margin_top(6)
+        .margin_bottom(8)
+        .margin_end(10)
+        .build();
+    resize_handle.add_css_class("dim-label");
+    resize_handle.set_opacity(0.0);
+
+    let block_body = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(0)
+        .build();
+    let scroller = gtk::ScrolledWindow::builder()
+        .hexpand(true)
+        .vexpand(true)
+        .child(&view)
+        .build();
+    block_body.append(&drag_handle);
+    block_body.append(&scroller);
+    block_body.append(&resize_handle);
+
+    let frame = gtk::Frame::new(None);
+    frame.set_child(Some(&block_body));
+    frame.set_size_request(block.width, block.height);
+    frame.add_css_class("card");
+
+    let widget = Rc::new(TextBlockWidget {
+        id: block.id.clone(),
+        frame,
+        drag_handle,
+        resize_handle,
+        buffer,
+        view,
+        layout: RefCell::new(block.layout()),
+        hovered: Cell::new(false),
+        interacting: Cell::new(false),
+    });
+
+    {
+        let ui = Rc::clone(ui);
+        let widget_for_focus = Rc::clone(&widget);
+        let focus = gtk::EventControllerFocus::new();
+        focus.connect_enter(move |_| {
+            ui.set_active_block(Some(widget_for_focus.id.clone()));
+        });
+        widget.view.add_controller(focus);
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        let widget_for_insert = Rc::clone(&widget);
+        widget.buffer.connect_insert_text(move |buffer, location, text| {
+            if ui.loading_ui.get() {
+                return;
+            }
+
+            ui.set_active_block(Some(widget_for_insert.id.clone()));
+            let pending = ui.pending_format();
+            if pending.is_plain() {
+                return;
+            }
+
+            let start_offset = location.offset();
+            let char_count = text.chars().count() as i32;
+            let buffer = buffer.clone();
+            let insert_mark = buffer.get_insert();
+
+            glib::idle_add_local_once(move || {
+                let end_offset = buffer.iter_at_mark(&insert_mark).offset();
+                let applied_count = (end_offset - start_offset).max(0).min(char_count);
+
+                rich_text::apply_pending_format_by_offsets(
+                    &buffer,
+                    start_offset,
+                    applied_count,
+                    &pending,
+                );
+            });
+        });
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        let widget_for_change = Rc::clone(&widget);
+        widget.buffer.connect_changed(move |_| {
+            ui.set_active_block(Some(widget_for_change.id.clone()));
+            ui.mark_dirty();
+            ui.schedule_autosave();
+        });
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        let widget_for_hover = Rc::clone(&widget);
+        let hover = gtk::EventControllerMotion::new();
+        hover.connect_enter(move |_, _, _| {
+            widget_for_hover.hovered.set(true);
+            ui.sync_block_chrome(&widget_for_hover);
+        });
+
+        let ui = Rc::clone(ui);
+        let widget_for_hover = Rc::clone(&widget);
+        hover.connect_leave(move |_| {
+            widget_for_hover.hovered.set(false);
+            ui.sync_block_chrome(&widget_for_hover);
+        });
+        widget.frame.add_controller(hover);
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        let widget_for_drag = Rc::clone(&widget);
+        let gesture = gtk::GestureDrag::new();
+        let drag_origin = Rc::new(RefCell::new(None::<block_layout::TextBlockLayout>));
+
+        {
+            let ui = Rc::clone(&ui);
+            let drag_origin = Rc::clone(&drag_origin);
+            let widget_for_drag_begin = Rc::clone(&widget_for_drag);
+            gesture.connect_drag_begin(move |_, _, _| {
+                ui.set_active_block(Some(widget_for_drag_begin.id.clone()));
+                ui.begin_text_block_interaction(&widget_for_drag_begin.id);
+                drag_origin.replace(Some(widget_for_drag_begin.layout.borrow().clone()));
+            });
+        }
+
+        {
+            let ui = Rc::clone(&ui);
+            let drag_origin = Rc::clone(&drag_origin);
+            let widget_for_drag_update = Rc::clone(&widget_for_drag);
+            gesture.connect_drag_update(move |_, offset_x, offset_y| {
+                let Some(origin) = drag_origin.borrow().clone() else {
+                    return;
+                };
+
+                ui.update_text_block_layout(
+                    &widget_for_drag_update.id,
+                    block_layout::TextBlockLayout {
+                        x: origin.x + offset_x.round() as i32,
+                        y: origin.y + offset_y.round() as i32,
+                        width: origin.width,
+                        height: origin.height,
+                    },
+                );
+            });
+        }
+
+        {
+            let ui = Rc::clone(&ui);
+            gesture.connect_drag_end(move |_, _, _| {
+                ui.finalize_text_block_layout();
+                ui.finish_text_block_interaction();
+                ui.mark_dirty();
+                if let Err(error) = ui.save_immediately("Block position saved") {
+                    ui.set_status(&format!("Layout save failed: {error}"));
+                }
+            });
+        }
+
+        widget.drag_handle.add_controller(gesture);
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        let widget_for_resize = Rc::clone(&widget);
+        let gesture = gtk::GestureDrag::new();
+        let resize_origin = Rc::new(RefCell::new(None::<block_layout::TextBlockLayout>));
+
+        {
+            let ui = Rc::clone(&ui);
+            let resize_origin = Rc::clone(&resize_origin);
+            let widget_for_resize_begin = Rc::clone(&widget_for_resize);
+            gesture.connect_drag_begin(move |_, _, _| {
+                ui.set_active_block(Some(widget_for_resize_begin.id.clone()));
+                ui.begin_text_block_interaction(&widget_for_resize_begin.id);
+                resize_origin.replace(Some(widget_for_resize_begin.layout.borrow().clone()));
+            });
+        }
+
+        {
+            let ui = Rc::clone(&ui);
+            let resize_origin = Rc::clone(&resize_origin);
+            let widget_for_resize_update = Rc::clone(&widget_for_resize);
+            gesture.connect_drag_update(move |_, offset_x, offset_y| {
+                let Some(origin) = resize_origin.borrow().clone() else {
+                    return;
+                };
+
+                ui.update_text_block_layout(
+                    &widget_for_resize_update.id,
+                    block_layout::TextBlockLayout {
+                        x: origin.x,
+                        y: origin.y,
+                        width: origin.width + offset_x.round() as i32,
+                        height: origin.height + offset_y.round() as i32,
+                    },
+                );
+            });
+        }
+
+        {
+            let ui = Rc::clone(&ui);
+            gesture.connect_drag_end(move |_, _, _| {
+                ui.finalize_text_block_layout();
+                ui.finish_text_block_interaction();
+                ui.mark_dirty();
+                if let Err(error) = ui.save_immediately("Block size saved") {
+                    ui.set_status(&format!("Layout save failed: {error}"));
+                }
+            });
+        }
+
+        widget.resize_handle.add_controller(gesture);
+    }
+
+    widget
+}
+
 fn build_window(
     app: &adw::Application,
     ui: &Rc<DriftUi>,
@@ -1021,19 +1284,27 @@ fn build_formatting_toolbar(ui: &Rc<DriftUi>) -> gtk::Box {
 
     connect_style_toggle(&bold_button, ui, |ui, active| {
         ui.bold_mode.set(active);
-        rich_text::set_bold(&ui.body_buffer, active)
+        ui.active_buffer()
+            .map(|buffer| rich_text::set_bold(&buffer, active))
+            .unwrap_or(false)
     });
     connect_style_toggle(&italic_button, ui, |ui, active| {
         ui.italic_mode.set(active);
-        rich_text::set_italic(&ui.body_buffer, active)
+        ui.active_buffer()
+            .map(|buffer| rich_text::set_italic(&buffer, active))
+            .unwrap_or(false)
     });
     connect_style_toggle(&underline_button, ui, |ui, active| {
         ui.underline_mode.set(active);
-        rich_text::set_underline(&ui.body_buffer, active)
+        ui.active_buffer()
+            .map(|buffer| rich_text::set_underline(&buffer, active))
+            .unwrap_or(false)
     });
     connect_style_toggle(&strike_button, ui, |ui, active| {
         ui.strikethrough_mode.set(active);
-        rich_text::set_strikethrough(&ui.body_buffer, active)
+        ui.active_buffer()
+            .map(|buffer| rich_text::set_strikethrough(&buffer, active))
+            .unwrap_or(false)
     });
     let bold_button_for_clear = bold_button.clone();
     let italic_button_for_clear = italic_button.clone();
@@ -1054,9 +1325,15 @@ fn build_formatting_toolbar(ui: &Rc<DriftUi>) -> gtk::Box {
         strike_button_for_clear.set_active(false);
         color_combo_for_clear.set_active_id(Some("default"));
         ui.loading_ui.set(false);
-        rich_text::clear_formatting(&ui.body_buffer)
+        ui.active_buffer()
+            .map(|buffer| rich_text::clear_formatting(&buffer))
+            .unwrap_or(false)
     });
-    connect_toolbar_action(&bullet_button, ui, |ui| insert_bullet_list(&ui.body_buffer));
+    connect_toolbar_action(&bullet_button, ui, |ui| {
+        ui.active_buffer()
+            .map(|buffer| insert_bullet_list(&buffer))
+            .unwrap_or(false)
+    });
 
     {
         let ui = Rc::clone(ui);
@@ -1067,10 +1344,14 @@ fn build_formatting_toolbar(ui: &Rc<DriftUi>) -> gtk::Box {
 
             let changed = if color_id.as_str() == "default" {
                 ui.color_mode.replace(None);
-                rich_text::set_color(&ui.body_buffer, None)
+                ui.active_buffer()
+                    .map(|buffer| rich_text::set_color(&buffer, None))
+                    .unwrap_or(false)
             } else {
                 ui.color_mode.replace(Some(color_id.to_string()));
-                rich_text::set_color(&ui.body_buffer, Some(color_id.as_str()))
+                ui.active_buffer()
+                    .map(|buffer| rich_text::set_color(&buffer, Some(color_id.as_str())))
+                    .unwrap_or(false)
             };
 
             if changed {
@@ -1081,39 +1362,6 @@ fn build_formatting_toolbar(ui: &Rc<DriftUi>) -> gtk::Box {
             } else {
                 ui.set_status("Typing color updated");
             }
-        });
-    }
-
-    {
-        let ui = Rc::clone(ui);
-        let body_buffer = ui.body_buffer.clone();
-
-        body_buffer.connect_insert_text(move |buffer, location, text| {
-            if ui.loading_ui.get() {
-                return;
-            }
-
-            let pending = ui.pending_format();
-            if pending.is_plain() {
-                return;
-            }
-
-            let start_offset = location.offset();
-            let char_count = text.chars().count() as i32;
-            let buffer = buffer.clone();
-            let insert_mark = buffer.get_insert();
-
-            glib::idle_add_local_once(move || {
-                let end_offset = buffer.iter_at_mark(&insert_mark).offset();
-                let applied_count = (end_offset - start_offset).max(0).min(char_count);
-
-                rich_text::apply_pending_format_by_offsets(
-                    &buffer,
-                    start_offset,
-                    applied_count,
-                    &pending,
-                );
-            });
         });
     }
 
