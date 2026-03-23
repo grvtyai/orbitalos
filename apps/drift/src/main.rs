@@ -2478,13 +2478,6 @@ fn capture_snapshot(buffer: &gtk::TextBuffer) -> EditorSnapshot {
     }
 }
 
-fn apply_snapshot_to_widget(widget: &TextBlockWidget, snapshot: &EditorSnapshot) {
-    widget.restoring_history.set(true);
-    rich_text::set_buffer_content(&widget.buffer, &snapshot.plain_text, snapshot.markup.as_deref());
-    widget.last_snapshot.replace(snapshot.clone());
-    widget.restoring_history.set(false);
-}
-
 fn build_note_row(note: &NoteSummary) -> gtk::ListBoxRow {
     let row = gtk::ListBoxRow::new();
 
