@@ -578,64 +578,41 @@ fn build_snapshot_row(ui: &Rc<BlinkUi>, snapshot: &SnapshotSummary) -> gtk::List
     delete_button.set_opacity(0.0);
     delete_button.set_focus_on_click(false);
 
-    let delete_popover = gtk::Popover::new();
-    delete_popover.set_has_arrow(true);
-    delete_popover.set_autohide(true);
-    delete_popover.set_parent(&delete_button);
-
-    let delete_box = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(8)
-        .margin_top(10)
-        .margin_bottom(10)
-        .margin_start(10)
-        .margin_end(10)
-        .build();
-
-    let delete_label = gtk::Label::builder()
-        .label("Delete?")
-        .xalign(0.0)
-        .build();
-    delete_label.add_css_class("heading");
-
-    let actions = gtk::Box::builder()
-        .orientation(gtk::Orientation::Horizontal)
-        .spacing(8)
-        .build();
-
-    let confirm_button = gtk::Button::with_label("Ja");
-    confirm_button.add_css_class("destructive-action");
-    let cancel_button = gtk::Button::with_label("Nein");
-
-    actions.append(&confirm_button);
-    actions.append(&cancel_button);
-    delete_box.append(&delete_label);
-    delete_box.append(&actions);
-    delete_popover.set_child(Some(&delete_box));
-
-    {
-        let delete_popover = delete_popover.clone();
-        delete_button.connect_clicked(move |_| {
-            delete_popover.popup();
-        });
-    }
-
-    {
-        let delete_popover = delete_popover.clone();
-        cancel_button.connect_clicked(move |_| {
-            delete_popover.popdown();
-        });
-    }
-
     {
         let ui = Rc::clone(ui);
-        let delete_popover = delete_popover.clone();
         let snapshot_id = snapshot.id.clone();
-        confirm_button.connect_clicked(move |_| {
-            if let Err(error) = ui.remove_snapshot(&snapshot_id) {
-                ui.set_status(&format!("Delete failed: {error}"));
-            }
-            delete_popover.popdown();
+        delete_button.connect_clicked(move |_| {
+            let dialog = gtk::MessageDialog::builder()
+                .transient_for(
+                    ui.window
+                        .borrow()
+                        .as_ref()
+                        .expect("Blink window should exist while rows are active"),
+                )
+                .modal(true)
+                .message_type(gtk::MessageType::Question)
+                .buttons(gtk::ButtonsType::None)
+                .text("Delete?")
+                .secondary_text("Do you want to remove this snapshot from the list?")
+                .build();
+
+            dialog.add_button("Nein", gtk::ResponseType::No);
+            dialog.add_button("Ja", gtk::ResponseType::Yes);
+            dialog.set_default_response(gtk::ResponseType::No);
+
+            let ui_for_response = Rc::clone(&ui);
+            let snapshot_id_for_response = snapshot_id.clone();
+            dialog.connect_response(move |dialog, response| {
+                if response == gtk::ResponseType::Yes {
+                    if let Err(error) = ui_for_response.remove_snapshot(&snapshot_id_for_response) {
+                        ui_for_response.set_status(&format!("Delete failed: {error}"));
+                    }
+                }
+
+                dialog.close();
+            });
+
+            dialog.present();
         });
     }
 
