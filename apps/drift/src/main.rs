@@ -113,6 +113,7 @@ struct TextBlockWidget {
     frame: gtk::Fixed,
     editor_frame: gtk::Frame,
     drag_handle: gtk::Box,
+    copy_handle: Option<gtk::Button>,
     resize_handle: gtk::Frame,
     buffer: gtk::TextBuffer,
     view: gtk::TextView,
@@ -737,6 +738,9 @@ impl DriftUi {
         let opacity = if visible { 1.0 } else { 0.0 };
 
         widget.drag_handle.set_opacity(opacity);
+        if let Some(copy_handle) = widget.copy_handle.as_ref() {
+            copy_handle.set_opacity(opacity);
+        }
         widget.resize_handle.set_opacity(opacity);
     }
 
@@ -1376,6 +1380,7 @@ fn build_block_widget(
         .child(&view)
         .build();
     let editor_frame = gtk::Frame::new(None);
+    let mut copy_handle = None;
     match block.kind {
         block_layout::BlockKind::Text => {
             editor_frame.set_child(Some(&scroller));
@@ -1388,6 +1393,7 @@ fn build_block_widget(
             copy_button.set_valign(gtk::Align::Start);
             copy_button.set_margin_end(10);
             copy_button.set_margin_top(8);
+            copy_button.set_opacity(0.0);
 
             {
                 let ui = Rc::clone(ui);
@@ -1410,6 +1416,7 @@ fn build_block_widget(
             code_overlay.add_overlay(&copy_button);
             editor_frame.set_child(Some(&code_overlay));
             editor_frame.add_css_class("drift-code-block");
+            copy_handle = Some(copy_button);
         }
     }
     editor_frame.set_size_request(block.width, block.height);
@@ -1434,6 +1441,7 @@ fn build_block_widget(
         frame,
         editor_frame,
         drag_handle,
+        copy_handle,
         resize_handle,
         buffer,
         view,
@@ -1927,6 +1935,8 @@ fn install_app_styles() {
         .drift-window.theme-dark .drift-code-copy {
             background: rgba(101, 69, 186, 0.82);
             border: 1px solid alpha(#c09cff, 0.24);
+            padding: 2px 8px;
+            min-height: 24px;
         }
 
         .drift-window.theme-dark row.page-row:selected {
@@ -2019,6 +2029,8 @@ fn install_app_styles() {
         .drift-window.theme-light .drift-code-copy {
             background: rgba(224, 212, 255, 0.98);
             border: 1px solid alpha(#c6abff, 0.52);
+            padding: 2px 8px;
+            min-height: 24px;
         }
 
         .drift-window.theme-light row.page-row:selected {
