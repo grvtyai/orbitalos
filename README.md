@@ -33,7 +33,7 @@ Current milestone:
 ## Apps
 
 - [`Drift`](apps/drift/README.md) notes app, currently the primary active app
-- `Blink` snapshot app, planned
+- [`Blink`](apps/blink/README.md) snapshot app, scaffolded
 - `Prism` viewer app, planned
 - `Vector` planner app, planned
 - `Relay` mail app, planned
@@ -67,6 +67,13 @@ Current `Drift` already includes:
 - dedicated app settings with grid density, theme switching, and help links
 - local per-app settings persisted in the Drift config directory
 - dedicated app documentation in [`apps/drift/README.md`](apps/drift/README.md)
+
+Current `Blink` already includes:
+
+- a dedicated app crate in the workspace
+- GTK4 + Libadwaita bootstrap on top of `orbital-core`
+- shared OrbitalOS app identity and path discovery
+- a first placeholder window for the snapshot app direction
 
 ## Ubuntu VM Bootstrap
 

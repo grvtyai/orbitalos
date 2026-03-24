@@ -5,7 +5,7 @@ This directory contains the OrbitalOS application crates.
 ## Planned Apps
 
 - [`drift/`](drift/README.md) Notes
-- `blink/` Snapshot
+- [`blink/`](blink/README.md) Snapshot
 - `prism/` Viewer
 - `vector/` Planner
 - `relay/` Mail
@@ -20,3 +20,4 @@ Libadwaita application built on top of `orbital-core`.
 Current app docs:
 
 - [`Drift README`](drift/README.md) for current features, setup, and run instructions
+- [`Blink README`](blink/README.md) for current scaffold, direction, and run instructions
