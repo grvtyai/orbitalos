@@ -961,12 +961,14 @@ impl DriftUi {
         block.id = self.next_block_id_for(block.kind);
         let offset = (self.grid_size() * 2).max(12);
         let min_units = block_layout::min_block_units(block.kind);
+        let duplicated_width = block.width;
+        let duplicated_height = block.height;
         block = block.with_layout(
             block_layout::TextBlockLayout {
                 x: block.x + offset,
                 y: block.y + offset,
-                width: block.width,
-                height: block.height,
+                width: duplicated_width,
+                height: duplicated_height,
             }
             .clamp_to_canvas_with_min_units(self.grid_size(), min_units),
         );
