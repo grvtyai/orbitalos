@@ -18,8 +18,13 @@ Current `Blink` already includes:
 - a dedicated Rust app crate inside `apps/blink/`
 - GTK4 + Libadwaita app bootstrap
 - shared OrbitalOS app identity through `orbital-core`
-- shared path discovery through `orbital-core`
-- a first placeholder window describing the planned snapshot direction
+- shared path discovery and shared SQLite bootstrap through `orbital-core`
+- a first persistent snapshot model and repository in the shared core
+- a local snapshot library with sidebar list and detail panel
+- manual `New Snapshot` creation for storage and UI testing
+- `Import Image` with file copy into Blink app data storage
+- image preview, file path, and MIME type details
+- hover delete action with confirmation dialog
 
 ## Product Direction
 
@@ -66,6 +71,7 @@ cd ~/orbitalos && git pull && source "$HOME/.cargo/env" && cargo check -p blink 
 - shared OrbitalOS app identifiers
 - shared config/data/cache path discovery
 - shared database and domain foundations as they expand
+- imported image files stored under the Blink app data directory
 - a future snapshot model that can stay compatible with `Drift` and later apps
 
 See also:
@@ -93,7 +99,7 @@ The current implementation plan for `Blink` is:
 
 The next major steps for `Blink` are:
 
-- define the first snapshot capture flow
-- introduce the first persistent snapshot model on top of `orbital-core`
+- define the first real screenshot capture flow
+- refine snapshot metadata editing beyond the current import and test entry flow
 - keep app structure parallel to `Drift` where shared conventions make sense
 - prepare the storage and metadata shape for later cross-app sync

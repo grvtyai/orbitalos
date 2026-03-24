@@ -33,7 +33,7 @@ Current milestone:
 ## Apps
 
 - [`Drift`](apps/drift/README.md) notes app, currently the primary active app
-- [`Blink`](apps/blink/README.md) snapshot app, scaffolded
+- [`Blink`](apps/blink/README.md) snapshot app, Phase 1 in progress
 - `Prism` viewer app, planned
 - `Vector` planner app, planned
 - `Relay` mail app, planned
@@ -71,9 +71,14 @@ Current `Drift` already includes:
 Current `Blink` already includes:
 
 - a dedicated app crate in the workspace
-- GTK4 + Libadwaita bootstrap on top of `orbital-core`
-- shared OrbitalOS app identity and path discovery
-- a first placeholder window for the snapshot app direction
+- GTK4 + Libadwaita application bootstrap on top of `orbital-core`
+- shared OrbitalOS app identity, path discovery, and database bootstrap
+- a first persistent snapshot model and `SnapshotRepository`
+- a local snapshot library UI with list and detail view
+- manual snapshot creation for UI and storage testing
+- image import into the Blink app data directory
+- image preview plus file path and MIME metadata in the detail panel
+- hover delete action with confirmation dialog
 
 ## Ubuntu VM Bootstrap
 
@@ -123,4 +128,5 @@ Completed:
 Next:
 - add more block types like image
 - continue stabilizing block behavior and editing quality
+- continue Blink Phase 1 with capture-oriented snapshot flows
 - start pushing more cross-app conventions into the shared OrbitalOS data model
