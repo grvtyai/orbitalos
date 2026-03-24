@@ -1,4 +1,6 @@
 use std::cell::RefCell;
+use std::fs;
+use std::path::Path;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -64,14 +66,19 @@ fn main() {
 
 struct BlinkUi {
     database: OrbitalDatabase,
+    paths: OrbitalPaths,
+    window: RefCell<Option<adw::ApplicationWindow>>,
     list_box: gtk::ListBox,
+    preview_image: gtk::Image,
+    preview_placeholder: gtk::Label,
     detail_title: gtk::Label,
     detail_body: gtk::Label,
     detail_kind: gtk::Label,
     detail_source: gtk::Label,
+    detail_file_path: gtk::Label,
+    detail_mime_type: gtk::Label,
     detail_tags: gtk::Label,
     detail_id: gtk::Label,
-    detail_storage: gtk::Label,
     status_label: gtk::Label,
     snapshots: RefCell<Vec<SnapshotSummary>>,
     selected_snapshot_id: RefCell<Option<SnapshotId>>,
@@ -95,10 +102,16 @@ impl BlinkUi {
             .build();
         new_button.add_css_class("suggested-action");
 
+        let import_button = gtk::Button::builder()
+            .icon_name("folder-open-symbolic")
+            .tooltip_text("Import Image")
+            .build();
+
         let header_bar = adw::HeaderBar::builder()
             .title_widget(&header_title)
             .build();
         header_bar.pack_start(&new_button);
+        header_bar.pack_start(&import_button);
 
         let list_box = gtk::ListBox::builder()
             .selection_mode(gtk::SelectionMode::Single)
@@ -152,8 +165,37 @@ This is the first persistent Phase 1 step before capture tooling lands.",
             .xalign(0.0)
             .build();
 
+        let preview_image = gtk::Image::new();
+        preview_image.set_hexpand(true);
+        preview_image.set_vexpand(true);
+
+        let preview_placeholder = gtk::Label::builder()
+            .label("Import an image to preview it here.")
+            .wrap(true)
+            .xalign(0.0)
+            .build();
+        preview_placeholder.add_css_class("dim-label");
+
+        let preview_frame = gtk::Frame::new(None);
+        preview_frame.set_size_request(520, 280);
+        preview_frame.add_css_class("card");
+
+        let preview_box = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(12)
+            .margin_top(18)
+            .margin_bottom(18)
+            .margin_start(18)
+            .margin_end(18)
+            .build();
+        preview_box.append(&preview_image);
+        preview_box.append(&preview_placeholder);
+        preview_frame.set_child(Some(&preview_box));
+
         let (kind_row, detail_kind) = build_info_row("Kind");
         let (source_row, detail_source) = build_info_row("Source");
+        let (file_path_row, detail_file_path) = build_info_row("File Path");
+        let (mime_type_row, detail_mime_type) = build_info_row("MIME Type");
         let (tags_row, detail_tags) = build_info_row("Tags");
         let (id_row, detail_id) = build_info_row("Snapshot ID");
         let (storage_row, detail_storage) = build_info_row("Data Directory");
@@ -175,8 +217,11 @@ This is the first persistent Phase 1 step before capture tooling lands.",
             .build();
         detail_panel.append(&detail_title);
         detail_panel.append(&detail_body);
+        detail_panel.append(&preview_frame);
         detail_panel.append(&kind_row);
         detail_panel.append(&source_row);
+        detail_panel.append(&file_path_row);
+        detail_panel.append(&mime_type_row);
         detail_panel.append(&tags_row);
         detail_panel.append(&id_row);
         detail_panel.append(&storage_row);
@@ -208,14 +253,19 @@ This is the first persistent Phase 1 step before capture tooling lands.",
 
         let ui = Rc::new(Self {
             database,
+            paths,
+            window: RefCell::new(None),
             list_box,
+            preview_image,
+            preview_placeholder,
             detail_title,
             detail_body,
             detail_kind,
             detail_source,
+            detail_file_path,
+            detail_mime_type,
             detail_tags,
             detail_id,
-            detail_storage,
             status_label,
             snapshots: RefCell::new(Vec::new()),
             selected_snapshot_id: RefCell::new(None),
@@ -228,8 +278,9 @@ This is the first persistent Phase 1 step before capture tooling lands.",
             .default_height(720)
             .build();
         window.set_content(Some(&content));
+        ui.window.replace(Some(window.clone()));
 
-        connect_actions(&ui, &new_button);
+        connect_actions(&ui, &new_button, &import_button);
         ui.reload_snapshots(None)?;
 
         Ok(window)
@@ -286,6 +337,43 @@ This is the first persistent Phase 1 step before capture tooling lands.",
         Ok(())
     }
 
+    fn import_image(self: &Rc<Self>, source_path: &Path) -> orbital_core::OrbitalResult<()> {
+        let import_dir = self.paths.app_data_dir(OrbitalApp::Blink).join("imports");
+        fs::create_dir_all(&import_dir)?;
+
+        let snapshot_id = generate_snapshot_id();
+        let extension = source_path
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_ascii_lowercase());
+
+        let target_file_name = match extension.as_deref() {
+            Some(ext) if !ext.is_empty() => format!("{}.{}", snapshot_id.as_str(), ext),
+            _ => snapshot_id.as_str().to_string(),
+        };
+        let target_path = import_dir.join(target_file_name);
+
+        fs::copy(source_path, &target_path)?;
+
+        let title = source_path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("Imported image");
+
+        let mut new_snapshot = NewSnapshot::new(snapshot_id.clone(), title, SnapshotKind::Image);
+        new_snapshot.source = Some(source_path.display().to_string());
+        new_snapshot.file_path = Some(target_path.display().to_string());
+        new_snapshot.mime_type = infer_mime_type(source_path);
+
+        let snapshot = self.repository().create(new_snapshot)?;
+        self.selected_snapshot_id
+            .replace(Some(snapshot.id.clone()));
+        self.reload_snapshots(Some(snapshot.id.clone()))?;
+        self.set_status("Image imported");
+        Ok(())
+    }
+
     fn load_snapshot_into_detail(self: &Rc<Self>, index: usize) {
         let Some(snapshot) = self.snapshots.borrow().get(index).cloned() else {
             self.show_empty_state();
@@ -301,6 +389,10 @@ This is the first persistent Phase 1 step before capture tooling lands.",
         self.detail_kind.set_label(snapshot.kind.label());
         self.detail_source
             .set_label(snapshot.source.as_deref().unwrap_or("No source yet"));
+        self.detail_file_path
+            .set_label(snapshot.file_path.as_deref().unwrap_or("No file imported yet"));
+        self.detail_mime_type
+            .set_label(snapshot.mime_type.as_deref().unwrap_or("Unknown"));
         let tags_label = if snapshot.tags.is_empty() {
             "No tags yet".to_string()
         } else {
@@ -308,6 +400,7 @@ This is the first persistent Phase 1 step before capture tooling lands.",
         };
         self.detail_tags.set_label(&tags_label);
         self.detail_id.set_label(snapshot.id.as_str());
+        self.update_preview(snapshot.file_path.as_deref());
         self.set_status("Snapshot loaded");
     }
 
@@ -319,8 +412,11 @@ This is the first persistent Phase 1 step before capture tooling lands.",
         );
         self.detail_kind.set_label("Image");
         self.detail_source.set_label("Blink");
+        self.detail_file_path.set_label("No file imported yet");
+        self.detail_mime_type.set_label("Unknown");
         self.detail_tags.set_label("No tags yet");
         self.detail_id.set_label("Not created yet");
+        self.update_preview(None);
         self.set_status("Snapshot library is empty");
     }
 
@@ -337,15 +433,63 @@ This is the first persistent Phase 1 step before capture tooling lands.",
     fn set_status(&self, message: &str) {
         self.status_label.set_label(message);
     }
+
+    fn update_preview(&self, file_path: Option<&str>) {
+        if let Some(path) = file_path {
+            self.preview_image.set_from_file(Some(path));
+            self.preview_image.set_visible(true);
+            self.preview_placeholder.set_visible(false);
+        } else {
+            self.preview_image.clear();
+            self.preview_image.set_visible(false);
+            self.preview_placeholder.set_visible(true);
+        }
+    }
 }
 
-fn connect_actions(ui: &Rc<BlinkUi>, new_button: &gtk::Button) {
+fn connect_actions(ui: &Rc<BlinkUi>, new_button: &gtk::Button, import_button: &gtk::Button) {
     {
         let ui = Rc::clone(ui);
         new_button.connect_clicked(move |_| {
             if let Err(error) = ui.create_snapshot() {
                 ui.set_status(&format!("Create failed: {error}"));
             }
+        });
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        import_button.connect_clicked(move |_| {
+            let dialog = gtk::FileChooserNative::builder()
+                .title("Import Image")
+                .action(gtk::FileChooserAction::Open)
+                .accept_label("Import")
+                .cancel_label("Cancel")
+                .build();
+
+            if let Some(window) = ui.window.borrow().clone() {
+                dialog.set_transient_for(Some(&window));
+            }
+
+            let ui_for_response = Rc::clone(&ui);
+            dialog.connect_response(move |dialog, response| {
+                if response == gtk::ResponseType::Accept {
+                    if let Some(file) = dialog.file() {
+                        if let Some(path) = file.path() {
+                            if let Err(error) = ui_for_response.import_image(&path) {
+                                ui_for_response.set_status(&format!("Import failed: {error}"));
+                            }
+                        } else {
+                            ui_for_response
+                                .set_status("Import failed: selected file path is not available");
+                        }
+                    }
+                }
+
+                dialog.hide();
+            });
+
+            dialog.show();
         });
     }
 
@@ -431,4 +575,21 @@ fn generate_snapshot_id() -> SnapshotId {
         .unwrap_or_default();
 
     SnapshotId::new(format!("snapshot-{nanos}"))
+}
+
+fn infer_mime_type(path: &Path) -> Option<String> {
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+
+    let mime_type = match extension.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "tif" | "tiff" => "image/tiff",
+        "svg" => "image/svg+xml",
+        _ => return None,
+    };
+
+    Some(mime_type.to_string())
 }

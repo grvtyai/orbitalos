@@ -21,14 +21,16 @@ impl<'connection> SnapshotRepository<'connection> {
 
         self.connection.execute(
             "
-            INSERT INTO snapshots (id, title, kind, source, created_at, updated_at, archived_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?5, NULL)
+            INSERT INTO snapshots (id, title, kind, source, file_path, mime_type, created_at, updated_at, archived_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, NULL)
             ",
             params![
                 snapshot.id.as_str(),
                 snapshot.title,
                 snapshot.kind.as_str(),
                 snapshot.source,
+                snapshot.file_path,
+                snapshot.mime_type,
                 now
             ],
         )?;
@@ -43,7 +45,7 @@ impl<'connection> SnapshotRepository<'connection> {
     pub fn get(&self, id: &SnapshotId) -> OrbitalResult<Option<SnapshotSummary>> {
         let mut statement = self.connection.prepare(
             "
-            SELECT id, title, kind, source, created_at, updated_at, archived_at
+            SELECT id, title, kind, source, file_path, mime_type, created_at, updated_at, archived_at
             FROM snapshots
             WHERE id = ?1
             ",
@@ -56,22 +58,36 @@ impl<'connection> SnapshotRepository<'connection> {
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, Option<String>>(3)?,
-                    row.get::<_, i64>(4)?,
-                    row.get::<_, i64>(5)?,
-                    row.get::<_, Option<i64>>(6)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, i64>(7)?,
+                    row.get::<_, Option<i64>>(8)?,
                 ))
             })
             .optional()?;
 
         snapshot
             .map(
-                |(id, title, stored_kind, source, created_at, updated_at, archived_at)| {
+                |(
+                    id,
+                    title,
+                    stored_kind,
+                    source,
+                    file_path,
+                    mime_type,
+                    created_at,
+                    updated_at,
+                    archived_at,
+                )| {
                     Ok(SnapshotSummary {
                         tags: self.load_tags(&id)?,
                         id,
                         title,
                         kind: SnapshotKind::from_stored(&stored_kind)?,
                         source,
+                        file_path,
+                        mime_type,
                         created_at,
                         updated_at,
                         archived_at,
@@ -84,7 +100,7 @@ impl<'connection> SnapshotRepository<'connection> {
     pub fn list_active(&self) -> OrbitalResult<Vec<SnapshotSummary>> {
         let mut statement = self.connection.prepare(
             "
-            SELECT id, title, kind, source, created_at, updated_at, archived_at
+            SELECT id, title, kind, source, file_path, mime_type, created_at, updated_at, archived_at
             FROM snapshots
             WHERE archived_at IS NULL
             ORDER BY updated_at DESC, created_at DESC, title ASC
@@ -97,17 +113,28 @@ impl<'connection> SnapshotRepository<'connection> {
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, Option<String>>(3)?,
-                row.get::<_, i64>(4)?,
-                row.get::<_, i64>(5)?,
-                row.get::<_, Option<i64>>(6)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, Option<i64>>(8)?,
             ))
         })?;
 
         let mut snapshots = Vec::new();
 
         for snapshot_row in snapshot_rows {
-            let (id, title, stored_kind, source, created_at, updated_at, archived_at) =
-                snapshot_row?;
+            let (
+                id,
+                title,
+                stored_kind,
+                source,
+                file_path,
+                mime_type,
+                created_at,
+                updated_at,
+                archived_at,
+            ) = snapshot_row?;
 
             snapshots.push(SnapshotSummary {
                 tags: self.load_tags(&id)?,
@@ -115,6 +142,8 @@ impl<'connection> SnapshotRepository<'connection> {
                 title,
                 kind: SnapshotKind::from_stored(&stored_kind)?,
                 source,
+                file_path,
+                mime_type,
                 created_at,
                 updated_at,
                 archived_at,

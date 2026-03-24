@@ -75,6 +75,8 @@ pub struct NewSnapshot {
     pub title: String,
     pub kind: SnapshotKind,
     pub source: Option<String>,
+    pub file_path: Option<String>,
+    pub mime_type: Option<String>,
     pub tags: Vec<String>,
 }
 
@@ -85,6 +87,8 @@ impl NewSnapshot {
             title: title.into(),
             kind,
             source: None,
+            file_path: None,
+            mime_type: None,
             tags: Vec::new(),
         }
     }
@@ -96,6 +100,8 @@ pub struct SnapshotSummary {
     pub title: String,
     pub kind: SnapshotKind,
     pub source: Option<String>,
+    pub file_path: Option<String>,
+    pub mime_type: Option<String>,
     pub tags: Vec<String>,
     pub created_at: i64,
     pub updated_at: i64,
