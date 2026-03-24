@@ -852,7 +852,7 @@ impl DriftUi {
                 },
                 height: match kind {
                     block_layout::BlockKind::Text => grid_size * 28,
-                    block_layout::BlockKind::Code => grid_size * 24,
+                    block_layout::BlockKind::Code => grid_size * 8,
                 },
             }
             .snapped_to_grid(grid_size)
@@ -1293,10 +1293,19 @@ fn build_block_widget(
             block_layout::BlockKind::Text => gtk::WrapMode::WordChar,
             block_layout::BlockKind::Code => gtk::WrapMode::None,
         })
-        .top_margin(12)
-        .bottom_margin(12)
+        .top_margin(match block.kind {
+            block_layout::BlockKind::Text => 12,
+            block_layout::BlockKind::Code => 10,
+        })
+        .bottom_margin(match block.kind {
+            block_layout::BlockKind::Text => 12,
+            block_layout::BlockKind::Code => 10,
+        })
         .left_margin(12)
-        .right_margin(12)
+        .right_margin(match block.kind {
+            block_layout::BlockKind::Text => 12,
+            block_layout::BlockKind::Code => 84,
+        })
         .monospace(matches!(block.kind, block_layout::BlockKind::Code))
         .vexpand(true)
         .build();
@@ -1372,26 +1381,13 @@ fn build_block_widget(
             editor_frame.set_child(Some(&scroller));
         }
         block_layout::BlockKind::Code => {
-            let code_header = gtk::Box::builder()
-                .orientation(gtk::Orientation::Horizontal)
-                .spacing(8)
-                .margin_top(8)
-                .margin_bottom(8)
-                .margin_start(10)
-                .margin_end(10)
-                .build();
-            code_header.add_css_class("drift-code-toolbar");
-
-            let code_label = gtk::Label::builder()
-                .label("Code")
-                .xalign(0.0)
-                .build();
-            code_label.add_css_class("heading");
-
-            let code_spacer = gtk::Box::builder().hexpand(true).build();
             let copy_button = gtk::Button::with_label("Copy");
             copy_button.add_css_class("flat");
             copy_button.add_css_class("drift-code-copy");
+            copy_button.set_halign(gtk::Align::End);
+            copy_button.set_valign(gtk::Align::Start);
+            copy_button.set_margin_end(10);
+            copy_button.set_margin_top(8);
 
             {
                 let ui = Rc::clone(ui);
@@ -1409,17 +1405,10 @@ fn build_block_widget(
                 });
             }
 
-            code_header.append(&code_label);
-            code_header.append(&code_spacer);
-            code_header.append(&copy_button);
-
-            let code_content = gtk::Box::builder()
-                .orientation(gtk::Orientation::Vertical)
-                .spacing(0)
-                .build();
-            code_content.append(&code_header);
-            code_content.append(&scroller);
-            editor_frame.set_child(Some(&code_content));
+            let code_overlay = gtk::Overlay::new();
+            code_overlay.set_child(Some(&scroller));
+            code_overlay.add_overlay(&copy_button);
+            editor_frame.set_child(Some(&code_overlay));
             editor_frame.add_css_class("drift-code-block");
         }
     }

@@ -10,7 +10,7 @@ const DEFAULT_BLOCK_Y_UNITS: i32 = 3;
 const DEFAULT_BLOCK_WIDTH_UNITS: i32 = 68;
 const DEFAULT_BLOCK_HEIGHT_UNITS: i32 = 48;
 const DEFAULT_CODE_BLOCK_WIDTH_UNITS: i32 = 52;
-const DEFAULT_CODE_BLOCK_HEIGHT_UNITS: i32 = 30;
+const DEFAULT_CODE_BLOCK_HEIGHT_UNITS: i32 = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteCanvasLayout {
