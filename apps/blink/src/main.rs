@@ -140,6 +140,8 @@ This is the first persistent Phase 1 step before capture tooling lands.",
             .min_content_width(280)
             .child(&list_box)
             .build();
+        list_scroller.set_vexpand(true);
+        list_scroller.set_hexpand(true);
 
         let sidebar = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -150,6 +152,7 @@ This is the first persistent Phase 1 step before capture tooling lands.",
             .margin_end(18)
             .width_request(320)
             .build();
+        sidebar.set_vexpand(true);
         sidebar.append(&sidebar_title);
         sidebar.append(&sidebar_body);
         sidebar.append(&list_scroller);
@@ -532,12 +535,16 @@ fn build_snapshot_row(snapshot: &SnapshotSummary) -> gtk::ListBoxRow {
     title.add_css_class("heading");
 
     let subtitle = gtk::Label::builder()
-        .label(match snapshot.source.as_deref() {
-            Some(source) => format!("{} - {source}", snapshot.kind.label()),
-            None => snapshot.kind.label().to_string(),
+        .label(match snapshot.file_path.as_deref() {
+            Some(path) => format!("{} - {}", snapshot.kind.label(), file_label(path)),
+            None => match snapshot.source.as_deref() {
+                Some(source) => format!("{} - {source}", snapshot.kind.label()),
+                None => snapshot.kind.label().to_string(),
+            },
         })
         .xalign(0.0)
-        .wrap(true)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .max_width_chars(28)
         .build();
     subtitle.add_css_class("dim-label");
 
@@ -596,4 +603,13 @@ fn infer_mime_type(path: &Path) -> Option<String> {
     };
 
     Some(mime_type.to_string())
+}
+
+fn file_label(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(path)
+        .to_string()
 }
