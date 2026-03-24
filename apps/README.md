@@ -19,4 +19,4 @@ Libadwaita application built on top of `orbital-core`.
 
 Current app docs:
 
-- [`Drift README`](drift/README.md)
+- [`Drift README`](drift/README.md) for current features, setup, and run instructions

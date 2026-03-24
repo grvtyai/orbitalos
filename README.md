@@ -41,6 +41,7 @@ Current milestone:
 - `Dock` files app, planned
 
 The app directory overview also lives in [`apps/README.md`](apps/README.md).
+For app-specific setup, run, and feature details, use the individual app README.
 
 ## Current Features
 
@@ -56,16 +57,16 @@ The current `orbital-core` foundation already includes:
 This is the base that `Drift` and later `Vector`, `Vlink`, and `Prism` will
 share so data can stay local and cross-app aware.
 
-Current `Drift` features already include:
+Current `Drift` already includes:
 
-- local notebook with page list and note editor
-- shared SQLite-backed note storage through `orbital-core`
-- autosave for title and body editing
-- inline formatting basics such as bold, italic, underline, strike, lists, and color
-- block-based canvas groundwork with a movable and resizable text block
-- configurable grid density through a dedicated settings window
+- a local notebook with compact sidebar, page actions, and page reordering
+- a block-based canvas editor with text blocks and code blocks
+- block drag, resize, duplicate, delete, and right-click menus
+- autosave plus global undo/redo across text, blocks, and page actions
+- rich-text basics for text blocks, including headings, lists, and checklists
+- dedicated app settings with grid density, theme switching, and help links
 - local per-app settings persisted in the Drift config directory
-- app branding in the header with logo and dedicated app documentation
+- dedicated app documentation in [`apps/drift/README.md`](apps/drift/README.md)
 
 ## Ubuntu VM Bootstrap
 
@@ -94,12 +95,6 @@ If the repo already exists on the VM, use:
 cd ~/orbitalos && git pull && source "$HOME/.cargo/env" && cargo check -p orbital-core && cargo test -p orbital-core
 ```
 
-To build and run the current `Drift` app on Ubuntu LTS:
-
-```bash
-cd ~/orbitalos && git pull && source "$HOME/.cargo/env" && cargo check -p drift && GSK_RENDERER=cairo LIBGL_ALWAYS_SOFTWARE=1 cargo run -p drift
-```
-
 ## First Development Goal
 
 Build a stable shared core that can be used by:
@@ -116,9 +111,9 @@ Completed:
 - Phase 1.1 system branding on Ubuntu LTS
 - Phase 1.2 `orbital-core` workspace foundation
 - Phase 1.3 shared local storage groundwork for `Drift`
-- Phase 1.3 first running `Drift` UI with editor, toolbar, grid canvas, and settings
+- Phase 1.3 running `Drift` UI with sidebar, toolbar, grid canvas, settings, and multiple block types
 
 Next:
-- deepen the block editor model in `Drift`
-- add more block types like image and code
-- continue stabilizing drag, resize, and layout behavior
+- add more block types like image
+- continue stabilizing block behavior and editing quality
+- start pushing more cross-app conventions into the shared OrbitalOS data model

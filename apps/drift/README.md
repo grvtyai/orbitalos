@@ -22,18 +22,30 @@ Current `Drift` already includes:
 - paragraph styles with `Normal` and `Heading 1`
 - list and checklist helpers
 - improved paragraph behavior for continuing and ending lists
-- a block-based editor with multiple text blocks
-- movable and resizable text blocks on a shared canvas grid
+- a block-based editor with multiple text blocks and code blocks
+- movable and resizable blocks on a shared canvas grid
+- block right-click actions for duplicate and delete
+- code blocks with hover copy action and automatic content-based resizing
 - right-click insert menu for `Textblock`, `Bild`, and `Code`
 - left-drag canvas panning on empty grid space
 - a configurable grid shown on the editor canvas
+- a compact-by-default sidebar with page drag-and-drop reordering
+- page right-click actions for rename, duplicate, and remove
+- dark and light themes, with dark as the default
 - a dedicated settings window with sections for:
   Allgemein, Personalisierung, Hotkeys, Hilfe
+- a direct GitHub repository link from the help settings
 - app branding in the header with the Drift logo
 
-## Run Locally
+## Install And Run
 
-From the repo root on Ubuntu LTS:
+`Drift` uses the shared OrbitalOS Ubuntu bootstrap from the repo root:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/grvtyai/orbitalos/main/scripts/bootstrap-ubuntu-lts.sh | bash
+```
+
+From the repo root on Ubuntu LTS, build and run `Drift` with:
 
 ```bash
 source "$HOME/.cargo/env"
@@ -65,7 +77,7 @@ See also:
 
 The next major steps for `Drift` are:
 
-- add additional block types such as image and code
+- add additional block types such as image
 - deepen text editing quality and formatting behavior
 - improve block selection, layering, and layout controls
 - expand app-specific settings and keyboard workflow
