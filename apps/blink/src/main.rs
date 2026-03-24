@@ -652,10 +652,10 @@ fn build_snapshot_row(ui: &Rc<BlinkUi>, snapshot: &SnapshotSummary) -> gtk::List
     row_layout.append(&delete_button);
 
     {
-        let delete_button = delete_button.clone();
+        let delete_button_enter = delete_button.clone();
         let hover = gtk::EventControllerMotion::new();
         hover.connect_enter(move |_, _, _| {
-            delete_button.set_opacity(1.0);
+            delete_button_enter.set_opacity(1.0);
         });
         let delete_button_leave = delete_button.clone();
         hover.connect_leave(move |_| {
