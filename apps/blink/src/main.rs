@@ -68,6 +68,7 @@ struct BlinkUi {
     database: OrbitalDatabase,
     paths: OrbitalPaths,
     window: RefCell<Option<adw::ApplicationWindow>>,
+    import_dialog: RefCell<Option<gtk::FileChooserNative>>,
     list_box: gtk::ListBox,
     preview_image: gtk::Image,
     preview_placeholder: gtk::Label,
@@ -255,6 +256,7 @@ This is the first persistent Phase 1 step before capture tooling lands.",
             database,
             paths,
             window: RefCell::new(None),
+            import_dialog: RefCell::new(None),
             list_box,
             preview_image,
             preview_placeholder,
@@ -487,8 +489,10 @@ fn connect_actions(ui: &Rc<BlinkUi>, new_button: &gtk::Button, import_button: &g
                 }
 
                 dialog.hide();
+                ui_for_response.import_dialog.borrow_mut().take();
             });
 
+            ui.import_dialog.replace(Some(dialog.clone()));
             dialog.show();
         });
     }
