@@ -73,7 +73,7 @@ As the project grows, apps should follow this pattern:
 Examples:
 
 - `Drift` note exports: `~/Documents/OrbitalOS/Drift/`
-- `Vlink` captured files: `~/Documents/OrbitalOS/Vlink/`
+- `Blink` captured files: `~/Documents/OrbitalOS/Blink/`
 - `Prism` generated previews or cache metadata: database + cache
 
 ## Why This Fits OrbitalOS

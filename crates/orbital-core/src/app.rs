@@ -6,7 +6,7 @@ pub enum OrbitalApp {
     Prism,
     Relay,
     Vector,
-    Vlink,
+    Blink,
 }
 
 pub const APP_NAMESPACE: &str = "io.github.grvtyai.orbitalos";
@@ -28,7 +28,7 @@ impl OrbitalApp {
             Self::Prism => "prism",
             Self::Relay => "relay",
             Self::Vector => "vector",
-            Self::Vlink => "vlink",
+            Self::Blink => "blink",
         }
     }
 
@@ -40,7 +40,7 @@ impl OrbitalApp {
             Self::Prism => "Prism",
             Self::Relay => "Relay",
             Self::Vector => "Vector",
-            Self::Vlink => "Vlink",
+            Self::Blink => "Blink",
         }
     }
 
@@ -57,4 +57,3 @@ impl OrbitalApp {
         }
     }
 }
-

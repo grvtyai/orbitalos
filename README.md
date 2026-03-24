@@ -33,7 +33,7 @@ Current milestone:
 ## Apps
 
 - [`Drift`](apps/drift/README.md) notes app, currently the primary active app
-- `Vlink` snapshot app, planned
+- `Blink` snapshot app, planned
 - `Prism` viewer app, planned
 - `Vector` planner app, planned
 - `Relay` mail app, planned
@@ -54,7 +54,7 @@ The current `orbital-core` foundation already includes:
 - a first common schema for notes, tags, links, attachments, and change history
 - a first `NoteRepository` for create, load, list, save, and archive flows
 
-This is the base that `Drift` and later `Vector`, `Vlink`, and `Prism` will
+This is the base that `Drift` and later `Vector`, `Blink`, and `Prism` will
 share so data can stay local and cross-app aware.
 
 Current `Drift` already includes:
@@ -99,7 +99,7 @@ cd ~/orbitalos && git pull && source "$HOME/.cargo/env" && cargo check -p orbita
 
 Build a stable shared core that can be used by:
 - `Drift` (Notes)
-- `Vlink` (Snapshot)
+- `Blink` (Snapshot)
 - `Prism` (Viewer)
 
 The core library is intentionally UI-agnostic so app crates can reuse the same

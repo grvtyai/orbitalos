@@ -5,7 +5,7 @@ This directory contains the OrbitalOS application crates.
 ## Planned Apps
 
 - [`drift/`](drift/README.md) Notes
-- `vlink/` Snapshot
+- `blink/` Snapshot
 - `prism/` Viewer
 - `vector/` Planner
 - `relay/` Mail
