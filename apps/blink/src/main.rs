@@ -97,7 +97,6 @@ impl BlinkUi {
 
         let header_bar = adw::HeaderBar::builder()
             .title_widget(&header_title)
-            .show_title(true)
             .build();
         header_bar.pack_start(&new_button);
 
@@ -302,11 +301,12 @@ This is the first persistent Phase 1 step before capture tooling lands.",
         self.detail_kind.set_label(snapshot.kind.label());
         self.detail_source
             .set_label(snapshot.source.as_deref().unwrap_or("No source yet"));
-        self.detail_tags.set_label(if snapshot.tags.is_empty() {
-            "No tags yet"
+        let tags_label = if snapshot.tags.is_empty() {
+            "No tags yet".to_string()
         } else {
-            &snapshot.tags.join(", ")
-        });
+            snapshot.tags.join(", ")
+        };
+        self.detail_tags.set_label(&tags_label);
         self.detail_id.set_label(snapshot.id.as_str());
         self.set_status("Snapshot loaded");
     }
