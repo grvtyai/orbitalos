@@ -1,16 +1,19 @@
 # Blink
 
+![Blink Logo](../../orbital-assets/logos/blink_logo.png)
+
 `Blink` is the OrbitalOS snapshot app.
 
 It will sit alongside `Drift` on the same shared OrbitalOS foundation so later
 cross-app sync and shared local data flows can evolve without changing the app
 shape again.
 
-## Current Status
+It is being built in Rust with GTK4 and Libadwaita on top of the shared
+`orbital-core` library.
 
-The current `Blink` crate is a first workspace scaffold.
+## Current Scope
 
-It already includes:
+Current `Blink` already includes:
 
 - a dedicated Rust app crate inside `apps/blink/`
 - GTK4 + Libadwaita app bootstrap
@@ -18,18 +21,29 @@ It already includes:
 - shared path discovery through `orbital-core`
 - a first placeholder window describing the planned snapshot direction
 
-## Direction
+## Product Direction
 
 `Blink` is intended to become the local snapshot layer for OrbitalOS.
 
-Near-term focus:
+The product plan is currently grouped like this:
 
-- define the first snapshot capture flow
-- align storage conventions with `orbital-core`
-- keep app structure parallel to `Drift` where shared conventions make sense
-- prepare a shape that can later sync cleanly with other OrbitalOS apps
+- basics:
+  capture flows, local snapshot library, annotation core, export, hotkeys, and
+  delay capture
+- next:
+  OCR and text extraction, redaction helpers, video snips, search, tags, and
+  cross-links into `Drift`
+- nice to have:
+  smart framing, color picking, QR detection, GIF export, and richer markup
+  polish
 
 ## Install And Run
+
+`Blink` uses the shared OrbitalOS Ubuntu bootstrap from the repo root:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/grvtyai/orbitalos/main/scripts/bootstrap-ubuntu-lts.sh | bash
+```
 
 From the repo root on Ubuntu LTS:
 
@@ -39,6 +53,12 @@ cargo check -p blink
 GSK_RENDERER=cairo LIBGL_ALWAYS_SOFTWARE=1 cargo run -p blink
 ```
 
+If the repo is already cloned and you want the full refresh flow:
+
+```bash
+cd ~/orbitalos && git pull && source "$HOME/.cargo/env" && cargo check -p blink && GSK_RENDERER=cairo LIBGL_ALWAYS_SOFTWARE=1 cargo run -p blink
+```
+
 ## Storage
 
 `Blink` is being aligned with the shared OrbitalOS local app layout:
@@ -46,8 +66,34 @@ GSK_RENDERER=cairo LIBGL_ALWAYS_SOFTWARE=1 cargo run -p blink
 - shared OrbitalOS app identifiers
 - shared config/data/cache path discovery
 - shared database and domain foundations as they expand
+- a future snapshot model that can stay compatible with `Drift` and later apps
 
 See also:
 
 - [`../../README.md`](../../README.md)
 - [`../../crates/orbital-core`](../../crates/orbital-core)
+
+## Phase Plan
+
+The current implementation plan for `Blink` is:
+
+- Phase 1:
+  build the stable foundation with screenshot capture, local persistence,
+  snapshot listing, metadata, export, annotation basics, and shared data
+  conventions for future sync
+- Phase 2:
+  expand into OCR, text extraction, redaction helpers, video snips, pause and
+  resume recording, tagging, search, and first `Drift` integration points
+- Phase 3:
+  add smart capture tools, color picker, QR detection, GIF export, richer
+  polish features, and broader cross-app workflows on top of the stabilized
+  shared core
+
+## Near-Term Direction
+
+The next major steps for `Blink` are:
+
+- define the first snapshot capture flow
+- introduce the first persistent snapshot model on top of `orbital-core`
+- keep app structure parallel to `Drift` where shared conventions make sense
+- prepare the storage and metadata shape for later cross-app sync
