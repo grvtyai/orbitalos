@@ -9,6 +9,8 @@ const DEFAULT_BLOCK_X_UNITS: i32 = 3;
 const DEFAULT_BLOCK_Y_UNITS: i32 = 3;
 const DEFAULT_BLOCK_WIDTH_UNITS: i32 = 68;
 const DEFAULT_BLOCK_HEIGHT_UNITS: i32 = 48;
+const DEFAULT_CODE_BLOCK_WIDTH_UNITS: i32 = 52;
+const DEFAULT_CODE_BLOCK_HEIGHT_UNITS: i32 = 30;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteCanvasLayout {
@@ -16,8 +18,23 @@ pub struct NoteCanvasLayout {
     pub active_block_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlockKind {
+    Text,
+    Code,
+}
+
+impl Default for BlockKind {
+    fn default() -> Self {
+        Self::Text
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TextBlockState {
+    #[serde(default)]
+    pub kind: BlockKind,
     pub id: String,
     pub x: i32,
     pub y: i32,
@@ -124,11 +141,27 @@ pub fn default_text_block_state(id: String, grid_size: i32) -> TextBlockState {
     let grid_size = normalized_grid_size(grid_size);
 
     TextBlockState {
+        kind: BlockKind::Text,
         id,
         x: grid_size * DEFAULT_BLOCK_X_UNITS,
         y: grid_size * DEFAULT_BLOCK_Y_UNITS,
         width: grid_size * DEFAULT_BLOCK_WIDTH_UNITS,
         height: grid_size * DEFAULT_BLOCK_HEIGHT_UNITS,
+        body: String::new(),
+        body_markup: None,
+    }
+}
+
+pub fn default_code_block_state(id: String, grid_size: i32) -> TextBlockState {
+    let grid_size = normalized_grid_size(grid_size);
+
+    TextBlockState {
+        kind: BlockKind::Code,
+        id,
+        x: grid_size * DEFAULT_BLOCK_X_UNITS,
+        y: grid_size * DEFAULT_BLOCK_Y_UNITS,
+        width: grid_size * DEFAULT_CODE_BLOCK_WIDTH_UNITS,
+        height: grid_size * DEFAULT_CODE_BLOCK_HEIGHT_UNITS,
         body: String::new(),
         body_markup: None,
     }
@@ -163,6 +196,7 @@ pub fn deserialize_layout(
             return NoteCanvasLayout {
                 active_block_id: Some("text-block-1".to_string()),
                 blocks: vec![TextBlockState {
+                    kind: BlockKind::Text,
                     id: "text-block-1".to_string(),
                     x: legacy.text_block.x,
                     y: legacy.text_block.y,

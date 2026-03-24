@@ -109,6 +109,7 @@ struct DriftUi {
 
 struct TextBlockWidget {
     id: String,
+    kind: block_layout::BlockKind,
     frame: gtk::Fixed,
     editor_frame: gtk::Frame,
     drag_handle: gtk::Box,
@@ -514,7 +515,7 @@ impl DriftUi {
             .set(layout.blocks.len().max(1) as u32 + 1);
 
         for block in &layout.blocks {
-            let widget = build_text_block_widget(self, block);
+            let widget = build_block_widget(self, block);
             self.body_canvas_fixed.put(&widget.frame, 0.0, 0.0);
             self.text_blocks.borrow_mut().push(widget);
         }
@@ -545,7 +546,7 @@ impl DriftUi {
             .set(layout.blocks.len().max(1) as u32 + 1);
 
         for block in &layout.blocks {
-            let widget = build_text_block_widget(self, block);
+            let widget = build_block_widget(self, block);
             self.body_canvas_fixed.put(&widget.frame, 0.0, 0.0);
             self.text_blocks.borrow_mut().push(widget);
         }
@@ -815,24 +816,44 @@ impl DriftUi {
     }
 
     fn create_text_block_at(self: &Rc<Self>, x: i32, y: i32) -> orbital_core::OrbitalResult<()> {
+        self.create_block_at(block_layout::BlockKind::Text, x, y)
+    }
+
+    fn create_code_block_at(self: &Rc<Self>, x: i32, y: i32) -> orbital_core::OrbitalResult<()> {
+        self.create_block_at(block_layout::BlockKind::Code, x, y)
+    }
+
+    fn create_block_at(
+        self: &Rc<Self>,
+        kind: block_layout::BlockKind,
+        x: i32,
+        y: i32,
+    ) -> orbital_core::OrbitalResult<()> {
         self.record_history_checkpoint()?;
 
         let grid_size = self.grid_size();
-        let block = block_layout::TextBlockState {
-            id: self.next_text_block_id(),
-            x,
-            y,
-            width: grid_size * 44,
-            height: grid_size * 28,
-            body: String::new(),
-            body_markup: None,
+        let block = match kind {
+            block_layout::BlockKind::Text => block_layout::default_text_block_state(
+                self.next_block_id_for(block_layout::BlockKind::Text),
+                grid_size,
+            ),
+            block_layout::BlockKind::Code => block_layout::default_code_block_state(
+                self.next_block_id_for(block_layout::BlockKind::Code),
+                grid_size,
+            ),
         }
         .with_layout(
             block_layout::TextBlockLayout {
                 x,
                 y,
-                width: grid_size * 44,
-                height: grid_size * 28,
+                width: match kind {
+                    block_layout::BlockKind::Text => grid_size * 44,
+                    block_layout::BlockKind::Code => grid_size * 46,
+                },
+                height: match kind {
+                    block_layout::BlockKind::Text => grid_size * 28,
+                    block_layout::BlockKind::Code => grid_size * 24,
+                },
             }
             .snapped_to_grid(grid_size)
             .clamp_to_canvas(grid_size),
@@ -841,7 +862,7 @@ impl DriftUi {
         self.preview_layout.borrow_mut().take();
         self.preview_block_id.borrow_mut().take();
         self.text_block_preview_frame.set_visible(false);
-        let widget = build_text_block_widget(self, &block);
+        let widget = build_block_widget(self, &block);
         self.body_canvas_fixed.put(&widget.frame, 0.0, 0.0);
         self.text_blocks.borrow_mut().push(widget.clone());
         self.active_block_id.replace(Some(block.id.clone()));
@@ -849,13 +870,20 @@ impl DriftUi {
         self.sync_block_chrome(&widget);
         widget.view.grab_focus();
         self.mark_dirty();
-        self.save_immediately("Text block created")
+        self.save_immediately(match kind {
+            block_layout::BlockKind::Text => "Text block created",
+            block_layout::BlockKind::Code => "Code block created",
+        })
     }
 
-    fn next_text_block_id(&self) -> String {
+    fn next_block_id_for(&self, kind: block_layout::BlockKind) -> String {
         let next = self.next_block_id.get();
         self.next_block_id.set(next + 1);
-        format!("text-block-{next}")
+        let prefix = match kind {
+            block_layout::BlockKind::Text => "text-block",
+            block_layout::BlockKind::Code => "code-block",
+        };
+        format!("{prefix}-{next}")
     }
 
     fn find_text_block(&self, block_id: &str) -> Option<Rc<TextBlockWidget>> {
@@ -876,7 +904,13 @@ impl DriftUi {
     }
 
     fn active_buffer(&self) -> Option<gtk::TextBuffer> {
-        self.active_text_block().map(|widget| widget.buffer.clone())
+        self.active_text_block().and_then(|widget| {
+            if widget.kind == block_layout::BlockKind::Text {
+                Some(widget.buffer.clone())
+            } else {
+                None
+            }
+        })
     }
 
     fn apply_paragraph_style(
@@ -1001,6 +1035,7 @@ impl DriftUi {
             .borrow()
             .iter()
             .map(|widget| block_layout::TextBlockState {
+                kind: widget.kind,
                 id: widget.id.clone(),
                 x: widget.layout.borrow().x,
                 y: widget.layout.borrow().y,
@@ -1010,7 +1045,10 @@ impl DriftUi {
                     .buffer
                     .text(&widget.buffer.start_iter(), &widget.buffer.end_iter(), true)
                     .to_string(),
-                body_markup: rich_text::serialize_buffer(&widget.buffer),
+                body_markup: match widget.kind {
+                    block_layout::BlockKind::Text => rich_text::serialize_buffer(&widget.buffer),
+                    block_layout::BlockKind::Code => None,
+                },
             })
             .collect();
 
@@ -1232,23 +1270,37 @@ impl DriftUi {
     }
 }
 
-fn build_text_block_widget(
+fn build_block_widget(
     ui: &Rc<DriftUi>,
     block: &block_layout::TextBlockState,
 ) -> Rc<TextBlockWidget> {
-    let buffer = rich_text::create_buffer();
-    rich_text::set_buffer_content(&buffer, &block.body, block.body_markup.as_deref());
+    let buffer = match block.kind {
+        block_layout::BlockKind::Text => {
+            let buffer = rich_text::create_buffer();
+            rich_text::set_buffer_content(&buffer, &block.body, block.body_markup.as_deref());
+            buffer
+        }
+        block_layout::BlockKind::Code => {
+            let buffer = gtk::TextBuffer::new(None);
+            buffer.set_text(&block.body);
+            buffer
+        }
+    };
 
     let view = gtk::TextView::builder()
         .buffer(&buffer)
-        .wrap_mode(gtk::WrapMode::WordChar)
+        .wrap_mode(match block.kind {
+            block_layout::BlockKind::Text => gtk::WrapMode::WordChar,
+            block_layout::BlockKind::Code => gtk::WrapMode::None,
+        })
         .top_margin(12)
         .bottom_margin(12)
         .left_margin(12)
         .right_margin(12)
-        .monospace(false)
+        .monospace(matches!(block.kind, block_layout::BlockKind::Code))
         .vexpand(true)
         .build();
+    view.set_accepts_tab(matches!(block.kind, block_layout::BlockKind::Code));
 
     let drag_handle = gtk::Box::builder()
         .orientation(gtk::Orientation::Horizontal)
@@ -1259,7 +1311,10 @@ fn build_text_block_widget(
     drag_handle.set_halign(gtk::Align::Fill);
 
     let block_title = gtk::Label::builder()
-        .label("Text block")
+        .label(match block.kind {
+            block_layout::BlockKind::Text => "Text block",
+            block_layout::BlockKind::Code => "Code block",
+        })
         .xalign(0.0)
         .build();
     block_title.add_css_class("heading");
@@ -1312,7 +1367,62 @@ fn build_text_block_widget(
         .child(&view)
         .build();
     let editor_frame = gtk::Frame::new(None);
-    editor_frame.set_child(Some(&scroller));
+    match block.kind {
+        block_layout::BlockKind::Text => {
+            editor_frame.set_child(Some(&scroller));
+        }
+        block_layout::BlockKind::Code => {
+            let code_header = gtk::Box::builder()
+                .orientation(gtk::Orientation::Horizontal)
+                .spacing(8)
+                .margin_top(8)
+                .margin_bottom(8)
+                .margin_start(10)
+                .margin_end(10)
+                .build();
+            code_header.add_css_class("drift-code-toolbar");
+
+            let code_label = gtk::Label::builder()
+                .label("Code")
+                .xalign(0.0)
+                .build();
+            code_label.add_css_class("heading");
+
+            let code_spacer = gtk::Box::builder().hexpand(true).build();
+            let copy_button = gtk::Button::with_label("Copy");
+            copy_button.add_css_class("flat");
+            copy_button.add_css_class("drift-code-copy");
+
+            {
+                let ui = Rc::clone(ui);
+                let buffer = buffer.clone();
+                copy_button.connect_clicked(move |_| {
+                    if let Some(display) = gtk::gdk::Display::default() {
+                        let text = buffer
+                            .text(&buffer.start_iter(), &buffer.end_iter(), true)
+                            .to_string();
+                        display.clipboard().set_text(&text);
+                        ui.set_status("Code copied");
+                    } else {
+                        ui.set_status("Clipboard unavailable");
+                    }
+                });
+            }
+
+            code_header.append(&code_label);
+            code_header.append(&code_spacer);
+            code_header.append(&copy_button);
+
+            let code_content = gtk::Box::builder()
+                .orientation(gtk::Orientation::Vertical)
+                .spacing(0)
+                .build();
+            code_content.append(&code_header);
+            code_content.append(&scroller);
+            editor_frame.set_child(Some(&code_content));
+            editor_frame.add_css_class("drift-code-block");
+        }
+    }
     editor_frame.set_size_request(block.width, block.height);
     editor_frame.add_css_class("card");
     editor_frame.add_css_class("drift-note-block");
@@ -1331,6 +1441,7 @@ fn build_text_block_widget(
 
     let widget = Rc::new(TextBlockWidget {
         id: block.id.clone(),
+        kind: block.kind,
         frame,
         editor_frame,
         drag_handle,
@@ -1358,6 +1469,10 @@ fn build_text_block_widget(
         let ui = Rc::clone(ui);
         let widget_for_insert = Rc::clone(&widget);
         widget.buffer.connect_insert_text(move |buffer, location, text| {
+            if widget_for_insert.kind != block_layout::BlockKind::Text {
+                return;
+            }
+
             if ui.loading_ui.get() {
                 return;
             }
@@ -1433,7 +1548,8 @@ fn build_text_block_widget(
         key.connect_key_pressed(move |_, keyval, _, state| {
             ui.set_active_block(Some(widget_for_key.id.clone()));
 
-            if keyval == gtk::gdk::Key::Return
+            if widget_for_key.kind == block_layout::BlockKind::Text
+                && keyval == gtk::gdk::Key::Return
                 && !state.contains(gtk::gdk::ModifierType::SHIFT_MASK)
                 && continue_list_or_checklist(&widget_for_key.buffer)
             {
@@ -1765,6 +1881,23 @@ fn install_app_styles() {
             box-shadow: 0 10px 30px alpha(#000000, 0.16);
         }
 
+        .drift-window.theme-dark .drift-code-block {
+            background: rgba(24, 17, 54, 0.98);
+            border: 1px solid alpha(#9874ff, 0.28);
+        }
+
+        .drift-window.theme-dark .drift-code-toolbar {
+            background: rgba(60, 42, 121, 0.72);
+            border-bottom: 1px solid alpha(#b694ff, 0.18);
+        }
+
+        .drift-window.theme-dark .drift-code-block textview,
+        .drift-window.theme-dark .drift-code-block text {
+            background: rgba(24, 17, 54, 0.98);
+            border: none;
+            color: #f8f4ff;
+        }
+
         .drift-window.theme-dark.drift-settings-window {
             border: 1px solid alpha(#d7c4ff, 0.36);
             box-shadow: 0 16px 34px alpha(#000000, 0.22);
@@ -1800,6 +1933,11 @@ fn install_app_styles() {
         .drift-window.theme-dark button:not(.destructive-action) {
             background: rgba(84, 57, 160, 0.74);
             border: 1px solid alpha(#b28fff, 0.18);
+        }
+
+        .drift-window.theme-dark .drift-code-copy {
+            background: rgba(101, 69, 186, 0.82);
+            border: 1px solid alpha(#c09cff, 0.24);
         }
 
         .drift-window.theme-dark row.page-row:selected {
@@ -1847,6 +1985,23 @@ fn install_app_styles() {
             box-shadow: 0 10px 28px alpha(#b48cff, 0.18);
         }
 
+        .drift-window.theme-light .drift-code-block {
+            background: rgba(248, 244, 255, 0.98);
+            border: 1px solid alpha(#c7adff, 0.52);
+        }
+
+        .drift-window.theme-light .drift-code-toolbar {
+            background: rgba(236, 227, 255, 0.96);
+            border-bottom: 1px solid alpha(#cfb9ff, 0.44);
+        }
+
+        .drift-window.theme-light .drift-code-block textview,
+        .drift-window.theme-light .drift-code-block text {
+            background: rgba(248, 244, 255, 0.98);
+            border: none;
+            color: #6f54bb;
+        }
+
         .drift-window.theme-light .drift-page-title,
         .drift-window.theme-light entry,
         .drift-window.theme-light textview {
@@ -1870,6 +2025,11 @@ fn install_app_styles() {
             background: rgba(233, 222, 255, 0.98);
             border: 1px solid alpha(#ceb4ff, 0.44);
             color: #795dc4;
+        }
+
+        .drift-window.theme-light .drift-code-copy {
+            background: rgba(224, 212, 255, 0.98);
+            border: 1px solid alpha(#c6abff, 0.52);
         }
 
         .drift-window.theme-light row.page-row:selected {
@@ -2454,7 +2614,6 @@ fn build_editor(ui: &Rc<DriftUi>) -> gtk::Box {
     let image_block_button = gtk::Button::with_label("Bild");
     let code_block_button = gtk::Button::with_label("Code");
     image_block_button.set_sensitive(false);
-    code_block_button.set_sensitive(false);
 
     insert_menu.append(&text_block_button);
     insert_menu.append(&image_block_button);
@@ -2480,6 +2639,19 @@ fn build_editor(ui: &Rc<DriftUi>) -> gtk::Box {
         text_block_button.connect_clicked(move |_| {
             let (x, y) = *insert_position.borrow();
             if let Err(error) = ui.create_text_block_at(x, y) {
+                ui.set_status(&format!("Create block failed: {error}"));
+            }
+            insert_popover.popdown();
+        });
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        let insert_popover = insert_popover.clone();
+        let insert_position = Rc::clone(&insert_position);
+        code_block_button.connect_clicked(move |_| {
+            let (x, y) = *insert_position.borrow();
+            if let Err(error) = ui.create_code_block_at(x, y) {
                 ui.set_status(&format!("Create block failed: {error}"));
             }
             insert_popover.popdown();
