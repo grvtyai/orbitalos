@@ -853,5 +853,5 @@ fn format_timestamp(unix_timestamp: i64) -> String {
     gtk::glib::DateTime::from_unix_local(unix_timestamp)
         .and_then(|value| value.format("%d.%m.%Y %H:%M"))
         .map(|value| value.to_string())
-        .unwrap_or_else(|| unix_timestamp.to_string())
+        .unwrap_or_else(|_| unix_timestamp.to_string())
 }
