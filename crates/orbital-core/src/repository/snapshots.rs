@@ -21,8 +21,8 @@ impl<'connection> SnapshotRepository<'connection> {
 
         self.connection.execute(
             "
-            INSERT INTO snapshots (id, title, kind, source, file_path, mime_type, created_at, updated_at, archived_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, NULL)
+            INSERT INTO snapshots (id, title, kind, source, file_path, mime_type, notes, created_at, updated_at, archived_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, NULL)
             ",
             params![
                 snapshot.id.as_str(),
@@ -31,6 +31,7 @@ impl<'connection> SnapshotRepository<'connection> {
                 snapshot.source,
                 snapshot.file_path,
                 snapshot.mime_type,
+                snapshot.notes,
                 now
             ],
         )?;
@@ -45,7 +46,7 @@ impl<'connection> SnapshotRepository<'connection> {
     pub fn get(&self, id: &SnapshotId) -> OrbitalResult<Option<SnapshotSummary>> {
         let mut statement = self.connection.prepare(
             "
-            SELECT id, title, kind, source, file_path, mime_type, created_at, updated_at, archived_at
+            SELECT id, title, kind, source, file_path, mime_type, notes, created_at, updated_at, archived_at
             FROM snapshots
             WHERE id = ?1
             ",
@@ -60,9 +61,10 @@ impl<'connection> SnapshotRepository<'connection> {
                     row.get::<_, Option<String>>(3)?,
                     row.get::<_, Option<String>>(4)?,
                     row.get::<_, Option<String>>(5)?,
-                    row.get::<_, i64>(6)?,
+                    row.get::<_, String>(6)?,
                     row.get::<_, i64>(7)?,
-                    row.get::<_, Option<i64>>(8)?,
+                    row.get::<_, i64>(8)?,
+                    row.get::<_, Option<i64>>(9)?,
                 ))
             })
             .optional()?;
@@ -76,6 +78,7 @@ impl<'connection> SnapshotRepository<'connection> {
                     source,
                     file_path,
                     mime_type,
+                    notes,
                     created_at,
                     updated_at,
                     archived_at,
@@ -88,6 +91,7 @@ impl<'connection> SnapshotRepository<'connection> {
                         source,
                         file_path,
                         mime_type,
+                        notes,
                         created_at,
                         updated_at,
                         archived_at,
@@ -100,7 +104,7 @@ impl<'connection> SnapshotRepository<'connection> {
     pub fn list_active(&self) -> OrbitalResult<Vec<SnapshotSummary>> {
         let mut statement = self.connection.prepare(
             "
-            SELECT id, title, kind, source, file_path, mime_type, created_at, updated_at, archived_at
+            SELECT id, title, kind, source, file_path, mime_type, notes, created_at, updated_at, archived_at
             FROM snapshots
             WHERE archived_at IS NULL
             ORDER BY updated_at DESC, created_at DESC, title ASC
@@ -115,9 +119,10 @@ impl<'connection> SnapshotRepository<'connection> {
                 row.get::<_, Option<String>>(3)?,
                 row.get::<_, Option<String>>(4)?,
                 row.get::<_, Option<String>>(5)?,
-                row.get::<_, i64>(6)?,
+                row.get::<_, String>(6)?,
                 row.get::<_, i64>(7)?,
-                row.get::<_, Option<i64>>(8)?,
+                row.get::<_, i64>(8)?,
+                row.get::<_, Option<i64>>(9)?,
             ))
         })?;
 
@@ -131,6 +136,7 @@ impl<'connection> SnapshotRepository<'connection> {
                 source,
                 file_path,
                 mime_type,
+                notes,
                 created_at,
                 updated_at,
                 archived_at,
@@ -144,6 +150,7 @@ impl<'connection> SnapshotRepository<'connection> {
                 source,
                 file_path,
                 mime_type,
+                notes,
                 created_at,
                 updated_at,
                 archived_at,
@@ -151,6 +158,41 @@ impl<'connection> SnapshotRepository<'connection> {
         }
 
         Ok(snapshots)
+    }
+
+    pub fn save(&self, snapshot: &SnapshotSummary) -> OrbitalResult<SnapshotSummary> {
+        let now = current_unix_timestamp()?;
+
+        let updated_rows = self.connection.execute(
+            "
+            UPDATE snapshots
+            SET title = ?1, source = ?2, file_path = ?3, mime_type = ?4, notes = ?5, updated_at = ?6, archived_at = ?7
+            WHERE id = ?8
+            ",
+            params![
+                snapshot.title.as_str(),
+                snapshot.source.as_deref(),
+                snapshot.file_path.as_deref(),
+                snapshot.mime_type.as_deref(),
+                snapshot.notes.as_str(),
+                now,
+                snapshot.archived_at,
+                snapshot.id.as_str(),
+            ],
+        )?;
+
+        if updated_rows == 0 {
+            return Err(OrbitalError::NotFound {
+                entity: SNAPSHOT_ENTITY_TYPE,
+                id: snapshot.id.to_string(),
+            });
+        }
+
+        self.replace_tags(&snapshot.id, &snapshot.tags)?;
+        self.record_change(&snapshot.id, "updated", now)?;
+
+        self.get(&snapshot.id)?
+            .ok_or(OrbitalError::DataInvariant("saved snapshot could not be reloaded"))
     }
 
     pub fn archive(&self, id: &SnapshotId) -> OrbitalResult<()> {

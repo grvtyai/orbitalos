@@ -72,14 +72,16 @@ struct BlinkUi {
     list_box: gtk::ListBox,
     preview_image: gtk::Image,
     preview_placeholder: gtk::Label,
-    detail_title: gtk::Label,
+    detail_title_entry: gtk::Entry,
     detail_body: gtk::Label,
+    detail_notes_buffer: gtk::TextBuffer,
     detail_kind: gtk::Label,
     detail_source: gtk::Label,
     detail_file_path: gtk::Label,
     detail_mime_type: gtk::Label,
-    detail_tags: gtk::Label,
+    detail_tags_entry: gtk::Entry,
     detail_id: gtk::Label,
+    save_button: gtk::Button,
     status_label: gtk::Label,
     snapshots: RefCell<Vec<SnapshotSummary>>,
     selected_snapshot_id: RefCell<Option<SnapshotId>>,
@@ -157,17 +159,62 @@ This is the first persistent Phase 1 step before capture tooling lands.",
         sidebar.append(&sidebar_body);
         sidebar.append(&list_scroller);
 
-        let detail_title = gtk::Label::builder()
-            .label("Blink")
+        let detail_heading = gtk::Label::builder()
+            .label("Snapshot Details")
             .xalign(0.0)
             .build();
-        detail_title.add_css_class("title-1");
+        detail_heading.add_css_class("title-1");
 
         let detail_body = gtk::Label::builder()
-            .label("Create the first snapshot entry to start the local library.")
+            .label("Edit the selected snapshot metadata and save it back into Blink.")
             .wrap(true)
             .xalign(0.0)
             .build();
+
+        let title_label = gtk::Label::builder()
+            .label("Title")
+            .xalign(0.0)
+            .build();
+        title_label.add_css_class("heading");
+
+        let detail_title_entry = gtk::Entry::builder()
+            .placeholder_text("Snapshot title")
+            .hexpand(true)
+            .build();
+
+        let notes_label = gtk::Label::builder()
+            .label("Notes")
+            .xalign(0.0)
+            .build();
+        notes_label.add_css_class("heading");
+
+        let detail_notes_buffer = gtk::TextBuffer::new(None);
+        let detail_notes_view = gtk::TextView::builder()
+            .buffer(&detail_notes_buffer)
+            .wrap_mode(gtk::WrapMode::WordChar)
+            .vexpand(false)
+            .build();
+        detail_notes_view.set_size_request(-1, 120);
+
+        let notes_scroller = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .min_content_height(120)
+            .child(&detail_notes_view)
+            .build();
+
+        let tags_label = gtk::Label::builder()
+            .label("Tags")
+            .xalign(0.0)
+            .build();
+        tags_label.add_css_class("heading");
+
+        let detail_tags_entry = gtk::Entry::builder()
+            .placeholder_text("tag1, tag2, tag3")
+            .hexpand(true)
+            .build();
+
+        let save_button = gtk::Button::with_label("Save Changes");
+        save_button.add_css_class("suggested-action");
 
         let preview_image = gtk::Image::new();
         preview_image.set_hexpand(true);
@@ -200,7 +247,6 @@ This is the first persistent Phase 1 step before capture tooling lands.",
         let (source_row, detail_source) = build_info_row("Source");
         let (file_path_row, detail_file_path) = build_info_row("File Path");
         let (mime_type_row, detail_mime_type) = build_info_row("MIME Type");
-        let (tags_row, detail_tags) = build_info_row("Tags");
         let (id_row, detail_id) = build_info_row("Snapshot ID");
         let (storage_row, detail_storage) = build_info_row("Data Directory");
         detail_storage.set_label(&data_dir.display().to_string());
@@ -219,14 +265,20 @@ This is the first persistent Phase 1 step before capture tooling lands.",
             .margin_start(24)
             .margin_end(24)
             .build();
-        detail_panel.append(&detail_title);
+        detail_panel.append(&detail_heading);
         detail_panel.append(&detail_body);
+        detail_panel.append(&title_label);
+        detail_panel.append(&detail_title_entry);
+        detail_panel.append(&notes_label);
+        detail_panel.append(&notes_scroller);
+        detail_panel.append(&tags_label);
+        detail_panel.append(&detail_tags_entry);
+        detail_panel.append(&save_button);
         detail_panel.append(&preview_frame);
         detail_panel.append(&kind_row);
         detail_panel.append(&source_row);
         detail_panel.append(&file_path_row);
         detail_panel.append(&mime_type_row);
-        detail_panel.append(&tags_row);
         detail_panel.append(&id_row);
         detail_panel.append(&storage_row);
         detail_panel.append(&status_label);
@@ -266,14 +318,16 @@ This is the first persistent Phase 1 step before capture tooling lands.",
             list_box,
             preview_image,
             preview_placeholder,
-            detail_title,
+            detail_title_entry,
             detail_body,
+            detail_notes_buffer,
             detail_kind,
             detail_source,
             detail_file_path,
             detail_mime_type,
-            detail_tags,
+            detail_tags_entry,
             detail_id,
+            save_button,
             status_label,
             snapshots: RefCell::new(Vec::new()),
             selected_snapshot_id: RefCell::new(None),
@@ -288,7 +342,7 @@ This is the first persistent Phase 1 step before capture tooling lands.",
         window.set_content(Some(&content));
         ui.window.replace(Some(window.clone()));
 
-        connect_actions(&ui, &new_button, &import_button);
+        connect_actions(&ui, &new_button, &import_button, &save_button);
         ui.reload_snapshots(None)?;
 
         Ok(window)
@@ -390,10 +444,11 @@ This is the first persistent Phase 1 step before capture tooling lands.",
 
         self.selected_snapshot_id
             .replace(Some(snapshot.id.clone()));
-        self.detail_title.set_label(&snapshot.title);
+        self.detail_title_entry.set_text(&snapshot.title);
         self.detail_body.set_label(
-            "This is a persistent Blink snapshot entry stored in the shared OrbitalOS database. Capture and media workflows will build on top of this Phase 1 base.",
+            "This snapshot is stored in the shared OrbitalOS database. You can refine its title, notes, and tags here before later capture workflows are added.",
         );
+        self.detail_notes_buffer.set_text(&snapshot.notes);
         self.detail_kind.set_label(snapshot.kind.label());
         self.detail_source
             .set_label(snapshot.source.as_deref().unwrap_or("No source yet"));
@@ -401,15 +456,50 @@ This is the first persistent Phase 1 step before capture tooling lands.",
             .set_label(snapshot.file_path.as_deref().unwrap_or("No file imported yet"));
         self.detail_mime_type
             .set_label(snapshot.mime_type.as_deref().unwrap_or("Unknown"));
-        let tags_label = if snapshot.tags.is_empty() {
-            "No tags yet".to_string()
-        } else {
-            snapshot.tags.join(", ")
-        };
-        self.detail_tags.set_label(&tags_label);
+        self.detail_tags_entry.set_text(&snapshot.tags.join(", "));
         self.detail_id.set_label(snapshot.id.as_str());
+        self.save_button.set_sensitive(true);
         self.update_preview(snapshot.file_path.as_deref());
         self.set_status("Snapshot loaded");
+    }
+
+    fn save_selected_snapshot(self: &Rc<Self>) -> orbital_core::OrbitalResult<()> {
+        let Some(snapshot_id) = self.selected_snapshot_id.borrow().clone() else {
+            self.set_status("Select a snapshot first");
+            return Ok(());
+        };
+
+        let mut snapshot = self
+            .repository()
+            .get(&snapshot_id)?
+            .ok_or(orbital_core::OrbitalError::NotFound {
+                entity: "snapshot",
+                id: snapshot_id.to_string(),
+            })?;
+
+        let title = self.detail_title_entry.text().trim().to_string();
+        let notes = self
+            .detail_notes_buffer
+            .text(
+                &self.detail_notes_buffer.start_iter(),
+                &self.detail_notes_buffer.end_iter(),
+                true,
+            )
+            .to_string();
+
+        snapshot.title = if title.is_empty() {
+            "Untitled snapshot".to_string()
+        } else {
+            title
+        };
+        snapshot.notes = notes.trim().to_string();
+        snapshot.tags = parse_tags(&self.detail_tags_entry.text());
+
+        let saved = self.repository().save(&snapshot)?;
+        self.selected_snapshot_id.replace(Some(saved.id.clone()));
+        self.reload_snapshots(Some(saved.id.clone()))?;
+        self.set_status("Snapshot saved");
+        Ok(())
     }
 
     fn remove_snapshot(self: &Rc<Self>, snapshot_id: &SnapshotId) -> orbital_core::OrbitalResult<()> {
@@ -432,16 +522,18 @@ This is the first persistent Phase 1 step before capture tooling lands.",
 
     fn show_empty_state(&self) {
         self.selected_snapshot_id.replace(None);
-        self.detail_title.set_label("No snapshots yet");
+        self.detail_title_entry.set_text("");
         self.detail_body.set_label(
             "Create the first snapshot entry to start Blink's local library. The next steps will build capture and annotation tools on top of this shared storage base.",
         );
+        self.detail_notes_buffer.set_text("");
         self.detail_kind.set_label("Image");
         self.detail_source.set_label("Blink");
         self.detail_file_path.set_label("No file imported yet");
         self.detail_mime_type.set_label("Unknown");
-        self.detail_tags.set_label("No tags yet");
+        self.detail_tags_entry.set_text("");
         self.detail_id.set_label("Not created yet");
+        self.save_button.set_sensitive(false);
         self.update_preview(None);
         self.set_status("Snapshot library is empty");
     }
@@ -473,12 +565,26 @@ This is the first persistent Phase 1 step before capture tooling lands.",
     }
 }
 
-fn connect_actions(ui: &Rc<BlinkUi>, new_button: &gtk::Button, import_button: &gtk::Button) {
+fn connect_actions(
+    ui: &Rc<BlinkUi>,
+    new_button: &gtk::Button,
+    import_button: &gtk::Button,
+    save_button: &gtk::Button,
+) {
     {
         let ui = Rc::clone(ui);
         new_button.connect_clicked(move |_| {
             if let Err(error) = ui.create_snapshot() {
                 ui.set_status(&format!("Create failed: {error}"));
+            }
+        });
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        save_button.connect_clicked(move |_| {
+            if let Err(error) = ui.save_selected_snapshot() {
+                ui.set_status(&format!("Save failed: {error}"));
             }
         });
     }
@@ -703,4 +809,12 @@ fn file_label(path: &str) -> String {
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(path)
         .to_string()
+}
+
+fn parse_tags(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect()
 }

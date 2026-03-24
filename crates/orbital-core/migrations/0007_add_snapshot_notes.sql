@@ -1,0 +1,2 @@
+ALTER TABLE snapshots
+    ADD COLUMN notes TEXT NOT NULL DEFAULT '';

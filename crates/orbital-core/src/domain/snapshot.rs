@@ -77,6 +77,7 @@ pub struct NewSnapshot {
     pub source: Option<String>,
     pub file_path: Option<String>,
     pub mime_type: Option<String>,
+    pub notes: String,
     pub tags: Vec<String>,
 }
 
@@ -89,6 +90,7 @@ impl NewSnapshot {
             source: None,
             file_path: None,
             mime_type: None,
+            notes: String::new(),
             tags: Vec::new(),
         }
     }
@@ -102,6 +104,7 @@ pub struct SnapshotSummary {
     pub source: Option<String>,
     pub file_path: Option<String>,
     pub mime_type: Option<String>,
+    pub notes: String,
     pub tags: Vec<String>,
     pub created_at: i64,
     pub updated_at: i64,
