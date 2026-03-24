@@ -18,7 +18,6 @@ mod settings;
 const AUTOSAVE_DELAY_MS: u64 = 900;
 const BLOCK_CHROME_TOP: i32 = 28;
 const BLOCK_CHROME_BOTTOM: i32 = 24;
-const MAX_UNDO_STEPS: usize = 100;
 const MAX_HISTORY_STEPS: usize = 100;
 const SIDEBAR_EXPANDED_WIDTH: i32 = 320;
 const SIDEBAR_COLLAPSED_WIDTH: i32 = 180;
@@ -117,8 +116,6 @@ struct TextBlockWidget {
     buffer: gtk::TextBuffer,
     view: gtk::TextView,
     layout: RefCell<block_layout::TextBlockLayout>,
-    undo_stack: RefCell<Vec<EditorSnapshot>>,
-    redo_stack: RefCell<Vec<EditorSnapshot>>,
     last_snapshot: RefCell<EditorSnapshot>,
     restoring_history: Cell<bool>,
     hovered: Cell<bool>,
@@ -253,6 +250,9 @@ impl DriftUi {
             .icon_name("preferences-system-symbolic")
             .tooltip_text("Settings")
             .build();
+        settings_button.add_css_class("window-control-like");
+        settings_button.add_css_class("flat");
+        settings_button.set_size_request(28, 28);
 
         let window = build_window(
             app,
@@ -341,12 +341,19 @@ impl DriftUi {
     }
 
     fn assemble_current_note_document(&self) -> orbital_core::OrbitalResult<Option<NoteDocument>> {
+        let layout = self.snapshot_layout();
+        self.assemble_note_document_with_layout(layout)
+    }
+
+    fn assemble_note_document_with_layout(
+        &self,
+        layout: block_layout::NoteCanvasLayout,
+    ) -> orbital_core::OrbitalResult<Option<NoteDocument>> {
         let Some(note_id) = self.selected_note_id.borrow().clone() else {
             return Ok(None);
         };
 
         let title = self.title_entry.text().trim().to_string();
-        let layout = self.snapshot_layout();
         let body = block_layout::compose_note_body(&layout);
         let body_markup = if layout.blocks.len() == 1 {
             layout.blocks.first().and_then(|block| block.body_markup.clone())
@@ -1016,10 +1023,17 @@ impl DriftUi {
     }
 
     fn capture_history_snapshot(&self) -> orbital_core::OrbitalResult<DriftHistorySnapshot> {
+        let current_note = self.assemble_current_note_document()?;
+        self.capture_history_snapshot_with_current_note(current_note)
+    }
+
+    fn capture_history_snapshot_with_current_note(
+        &self,
+        current_note: Option<NoteDocument>,
+    ) -> orbital_core::OrbitalResult<DriftHistorySnapshot> {
         let repository = self.repository();
         let mut notes = Vec::new();
         let active_notes = repository.list_active()?;
-        let current_note = self.assemble_current_note_document()?;
 
         for summary in active_notes {
             if current_note
@@ -1039,6 +1053,21 @@ impl DriftUi {
             notes,
             selected_note_id: self.selected_note_id.borrow().clone(),
         })
+    }
+
+    fn capture_history_snapshot_for_block_snapshot(
+        &self,
+        block_id: &str,
+        snapshot: &EditorSnapshot,
+    ) -> orbital_core::OrbitalResult<DriftHistorySnapshot> {
+        let mut layout = self.snapshot_layout();
+        if let Some(block) = layout.blocks.iter_mut().find(|block| block.id == block_id) {
+            block.body = snapshot.plain_text.clone();
+            block.body_markup = snapshot.markup.clone();
+        }
+
+        let current_note = self.assemble_note_document_with_layout(layout)?;
+        self.capture_history_snapshot_with_current_note(current_note)
     }
 
     fn push_history_snapshot(
@@ -1062,9 +1091,17 @@ impl DriftUi {
         }
 
         let snapshot = self.capture_history_snapshot()?;
+        self.record_history_snapshot(snapshot);
+        Ok(())
+    }
+
+    fn record_history_snapshot(&self, snapshot: DriftHistorySnapshot) {
+        if self.loading_ui.get() || self.history_suspended.get() {
+            return;
+        }
+
         Self::push_history_snapshot(&self.history_undo_stack, snapshot);
         self.history_redo_stack.borrow_mut().clear();
-        Ok(())
     }
 
     fn restore_history_snapshot(
@@ -1303,8 +1340,6 @@ fn build_text_block_widget(
         buffer,
         view,
         layout: RefCell::new(block.layout()),
-        undo_stack: RefCell::new(Vec::new()),
-        redo_stack: RefCell::new(Vec::new()),
         last_snapshot: RefCell::new(initial_snapshot),
         restoring_history: Cell::new(false),
         hovered: Cell::new(false),
@@ -1371,36 +1406,25 @@ fn build_text_block_widget(
     {
         let widget_for_history = Rc::clone(&widget);
         let ui_for_history = Rc::clone(ui);
-        widget.buffer.connect_begin_user_action(move |_| {
-            if widget_for_history.restoring_history.get() {
-                return;
-            }
-
-            if let Err(error) = ui_for_history.record_history_checkpoint() {
-                ui_for_history.set_status(&format!("History checkpoint failed: {error}"));
-                return;
-            }
-
-            let snapshot = widget_for_history.last_snapshot.borrow().clone();
-            let mut undo_stack = widget_for_history.undo_stack.borrow_mut();
-            undo_stack.push(snapshot);
-            if undo_stack.len() > MAX_UNDO_STEPS {
-                undo_stack.remove(0);
-            }
-            widget_for_history.redo_stack.borrow_mut().clear();
-        });
-    }
-
-    {
-        let widget_for_history = Rc::clone(&widget);
         widget.buffer.connect_end_user_action(move |buffer| {
             if widget_for_history.restoring_history.get() {
                 return;
             }
 
-            widget_for_history
-                .last_snapshot
-                .replace(capture_snapshot(buffer));
+            let before_snapshot = widget_for_history.last_snapshot.borrow().clone();
+            let after_snapshot = capture_snapshot(buffer);
+
+            if before_snapshot != after_snapshot {
+                match ui_for_history
+                    .capture_history_snapshot_for_block_snapshot(&widget_for_history.id, &before_snapshot)
+                {
+                    Ok(snapshot) => ui_for_history.record_history_snapshot(snapshot),
+                    Err(error) => ui_for_history
+                        .set_status(&format!("History checkpoint failed: {error}")),
+                }
+            }
+
+            widget_for_history.last_snapshot.replace(after_snapshot);
         });
     }
 
@@ -1692,6 +1716,13 @@ fn install_app_styles() {
         .header-action:checked {
             background: alpha(currentColor, 0.09);
             border-color: alpha(currentColor, 0.22);
+        }
+
+        .window-control-like {
+            min-width: 28px;
+            min-height: 28px;
+            padding: 0;
+            border-radius: 999px;
         }
 
         .page-drop-indicator {
@@ -1996,6 +2027,18 @@ fn build_settings_window(
         "Grid-Option",
         "Die Grid-Feinheit in Allgemein verwendet aktuell den derzeitigen Rastergrad als Standard.",
     ));
+    let github_row = adw::ActionRow::builder()
+        .title("GitHub Repository")
+        .subtitle("Offnet das OrbitalOS-Repo direkt im Standardbrowser.")
+        .build();
+    let github_button = gtk::LinkButton::builder()
+        .uri("https://github.com/grvtyai/orbitalos")
+        .label("Open GitHub")
+        .build();
+    github_button.set_valign(gtk::Align::Center);
+    github_row.add_suffix(&github_button);
+    github_row.set_activatable_widget(Some(&github_button));
+    help_group.add(&github_row);
     help_page.add(&help_group);
 
     window.add(&general_page);
