@@ -13,6 +13,10 @@ use orbital_core::{
     SnapshotRepository, SnapshotSummary,
 };
 
+const PREVIEW_MAX_WIDTH: i32 = 520;
+const PREVIEW_MAX_HEIGHT: i32 = 280;
+const PREVIEW_PADDING: i32 = 16;
+
 fn main() {
     adw::init().expect("Failed to initialize Libadwaita");
 
@@ -70,7 +74,8 @@ struct BlinkUi {
     window: RefCell<Option<adw::ApplicationWindow>>,
     import_dialog: RefCell<Option<gtk::FileChooserNative>>,
     list_box: gtk::ListBox,
-    preview_image: gtk::Image,
+    preview_frame: gtk::Frame,
+    preview_image: gtk::Picture,
     preview_placeholder: gtk::Label,
     detail_created_at: gtk::Label,
     detail_notes_buffer: gtk::TextBuffer,
@@ -205,29 +210,36 @@ This is the first persistent Phase 1 step before capture tooling lands.",
 
         let copy_button = gtk::Button::with_label("Copy to Clipboard");
 
-        let preview_image = gtk::Image::new();
+        let preview_image = gtk::Picture::new();
+        preview_image.set_can_shrink(true);
+        preview_image.set_keep_aspect_ratio(true);
         preview_image.set_hexpand(true);
         preview_image.set_vexpand(true);
+        preview_image.set_halign(gtk::Align::Center);
+        preview_image.set_valign(gtk::Align::Center);
 
         let preview_placeholder = gtk::Label::builder()
             .label("Import an image to preview it here.")
             .wrap(true)
-            .xalign(0.0)
+            .xalign(0.5)
+            .justify(gtk::Justification::Center)
             .build();
         preview_placeholder.add_css_class("dim-label");
 
         let preview_frame = gtk::Frame::new(None);
-        preview_frame.set_size_request(520, 280);
+        preview_frame.set_size_request(PREVIEW_MAX_WIDTH, PREVIEW_MAX_HEIGHT);
         preview_frame.add_css_class("card");
 
         let preview_box = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
-            .spacing(12)
-            .margin_top(18)
-            .margin_bottom(18)
-            .margin_start(18)
-            .margin_end(18)
+            .spacing(0)
+            .margin_top(PREVIEW_PADDING)
+            .margin_bottom(PREVIEW_PADDING)
+            .margin_start(PREVIEW_PADDING)
+            .margin_end(PREVIEW_PADDING)
             .build();
+        preview_box.set_halign(gtk::Align::Center);
+        preview_box.set_valign(gtk::Align::Center);
         preview_box.append(&preview_image);
         preview_box.append(&preview_placeholder);
         preview_frame.set_child(Some(&preview_box));
@@ -323,6 +335,7 @@ This is the first persistent Phase 1 step before capture tooling lands.",
             window: RefCell::new(None),
             import_dialog: RefCell::new(None),
             list_box,
+            preview_frame,
             preview_image,
             preview_placeholder,
             detail_created_at,
@@ -576,12 +589,39 @@ This is the first persistent Phase 1 step before capture tooling lands.",
 
     fn update_preview(&self, file_path: Option<&str>) {
         if let Some(path) = file_path {
-            self.preview_image.set_from_file(Some(path));
+            let file = gtk::gio::File::for_path(path);
+            let Ok(texture) = gtk::gdk::Texture::from_file(&file) else {
+                self.preview_image
+                    .set_paintable(Option::<&gtk::gdk::Texture>::None);
+                self.preview_image.set_visible(false);
+                self.preview_placeholder
+                    .set_label("Preview could not be loaded for this image.");
+                self.preview_placeholder.set_visible(true);
+                self.preview_frame
+                    .set_size_request(PREVIEW_MAX_WIDTH, PREVIEW_MAX_HEIGHT);
+                return;
+            };
+
+            let (content_width, content_height) =
+                preview_size_for(texture.width(), texture.height());
+            self.preview_image.set_paintable(Some(&texture));
+            self.preview_image.set_size_request(content_width, content_height);
+            self.preview_frame.set_size_request(
+                content_width + PREVIEW_PADDING * 2,
+                content_height + PREVIEW_PADDING * 2,
+            );
             self.preview_image.set_visible(true);
             self.preview_placeholder.set_visible(false);
         } else {
-            self.preview_image.clear();
+            self.preview_image
+                .set_paintable(Option::<&gtk::gdk::Texture>::None);
+            self.preview_image
+                .set_size_request(PREVIEW_MAX_WIDTH - PREVIEW_PADDING * 2, 1);
+            self.preview_frame
+                .set_size_request(PREVIEW_MAX_WIDTH, PREVIEW_MAX_HEIGHT);
             self.preview_image.set_visible(false);
+            self.preview_placeholder
+                .set_label("Import an image to preview it here.");
             self.preview_placeholder.set_visible(true);
         }
     }
@@ -854,4 +894,17 @@ fn format_timestamp(unix_timestamp: i64) -> String {
         .and_then(|value| value.format("%d.%m.%Y %H:%M"))
         .map(|value| value.to_string())
         .unwrap_or_else(|_| unix_timestamp.to_string())
+}
+
+fn preview_size_for(image_width: i32, image_height: i32) -> (i32, i32) {
+    let max_width = (PREVIEW_MAX_WIDTH - PREVIEW_PADDING * 2).max(1) as f64;
+    let max_height = (PREVIEW_MAX_HEIGHT - PREVIEW_PADDING * 2).max(1) as f64;
+    let width = image_width.max(1) as f64;
+    let height = image_height.max(1) as f64;
+    let scale = (max_width / width).min(max_height / height).min(1.0);
+
+    let target_width = (width * scale).round() as i32;
+    let target_height = (height * scale).round() as i32;
+
+    (target_width.max(1), target_height.max(1))
 }
