@@ -21,6 +21,9 @@ const BLOCK_CHROME_BOTTOM: i32 = 24;
 const MAX_HISTORY_STEPS: usize = 100;
 const SIDEBAR_EXPANDED_WIDTH: i32 = 320;
 const SIDEBAR_COLLAPSED_WIDTH: i32 = 180;
+const CODE_BLOCK_MIN_HEIGHT: i32 = 28;
+const CODE_BLOCK_LINE_HEIGHT: i32 = 18;
+const CODE_BLOCK_VERTICAL_PADDING: i32 = 10;
 
 fn main() {
     adw::init().expect("Failed to initialize Libadwaita");
@@ -119,7 +122,6 @@ struct TextBlockWidget {
     view: gtk::TextView,
     layout: RefCell<block_layout::TextBlockLayout>,
     last_snapshot: RefCell<EditorSnapshot>,
-    skip_next_history: Cell<bool>,
     restoring_history: Cell<bool>,
     hovered: Cell<bool>,
     interacting: Cell<bool>,
@@ -869,7 +871,7 @@ impl DriftUi {
 
         let grid_size = self.grid_size();
         let min_units = block_layout::min_block_units(kind);
-        let block = match kind {
+        let mut block = match kind {
             block_layout::BlockKind::Text => block_layout::default_text_block_state(
                 self.next_block_id_for(block_layout::BlockKind::Text),
                 grid_size,
@@ -889,12 +891,23 @@ impl DriftUi {
                 },
                 height: match kind {
                     block_layout::BlockKind::Text => grid_size * 28,
-                    block_layout::BlockKind::Code => grid_size * 4,
+                    block_layout::BlockKind::Code => CODE_BLOCK_MIN_HEIGHT,
                 },
             }
             .snapped_to_grid_with_min_units(grid_size, min_units)
             .clamp_to_canvas_with_min_units(grid_size, min_units),
         );
+
+        if kind == block_layout::BlockKind::Code {
+            let layout = block_layout::TextBlockLayout {
+                x: block.x,
+                y: block.y,
+                width: block.width,
+                height: CODE_BLOCK_MIN_HEIGHT,
+            }
+            .clamp_to_canvas_with_min_units(grid_size, min_units);
+            block = block.with_layout(layout);
+        }
 
         self.preview_layout.borrow_mut().take();
         self.preview_block_id.borrow_mut().take();
@@ -950,30 +963,28 @@ impl DriftUi {
         })
     }
 
-    fn expand_code_block_line(self: &Rc<Self>, widget: &Rc<TextBlockWidget>) -> orbital_core::OrbitalResult<()> {
-        self.record_history_checkpoint()?;
-        self.set_active_block(Some(widget.id.clone()));
-        widget.skip_next_history.set(true);
+    fn sync_code_block_height(&self, widget: &Rc<TextBlockWidget>) {
+        if widget.kind != block_layout::BlockKind::Code {
+            return;
+        }
 
-        widget.buffer.begin_user_action();
-        widget.buffer.insert_at_cursor("\n");
-
-        let line_step = (self.grid_size() * 3).max(20);
+        let desired_height = code_block_height_for_buffer(&widget.buffer);
         let min_units = block_layout::min_block_units(widget.kind);
-        let expanded_layout = block_layout::TextBlockLayout {
-            x: widget.layout.borrow().x,
-            y: widget.layout.borrow().y,
-            width: widget.layout.borrow().width,
-            height: widget.layout.borrow().height + line_step,
+        let current_layout = widget.layout.borrow().clone();
+        if current_layout.height == desired_height {
+            return;
+        }
+
+        let adjusted_layout = block_layout::TextBlockLayout {
+            x: current_layout.x,
+            y: current_layout.y,
+            width: current_layout.width,
+            height: desired_height,
         }
         .clamp_to_canvas_with_min_units(self.grid_size(), min_units);
-        widget.layout.replace(expanded_layout.clone());
-        self.render_block_layout(widget, &expanded_layout);
-        widget.buffer.end_user_action();
 
-        self.mark_dirty();
-        self.schedule_autosave();
-        Ok(())
+        widget.layout.replace(adjusted_layout.clone());
+        self.render_block_layout(widget, &adjusted_layout);
     }
 
     fn apply_paragraph_style(
@@ -1370,7 +1381,7 @@ fn build_block_widget(
             block_layout::BlockKind::Code => 72,
         })
         .monospace(matches!(block.kind, block_layout::BlockKind::Code))
-        .vexpand(true)
+        .vexpand(matches!(block.kind, block_layout::BlockKind::Text))
         .build();
     view.set_accepts_tab(matches!(block.kind, block_layout::BlockKind::Code));
 
@@ -1506,11 +1517,14 @@ fn build_block_widget(
         view,
         layout: RefCell::new(block.layout()),
         last_snapshot: RefCell::new(initial_snapshot),
-        skip_next_history: Cell::new(false),
         restoring_history: Cell::new(false),
         hovered: Cell::new(false),
         interacting: Cell::new(false),
     });
+
+    if widget.kind == block_layout::BlockKind::Code {
+        ui.sync_code_block_height(&widget);
+    }
 
     {
         let ui = Rc::clone(ui);
@@ -1568,6 +1582,7 @@ fn build_block_widget(
             }
 
             ui.set_active_block(Some(widget_for_change.id.clone()));
+            ui.sync_code_block_height(&widget_for_change);
             ui.mark_dirty();
             ui.schedule_autosave();
         });
@@ -1578,11 +1593,6 @@ fn build_block_widget(
         let ui_for_history = Rc::clone(ui);
         widget.buffer.connect_end_user_action(move |buffer| {
             if widget_for_history.restoring_history.get() {
-                return;
-            }
-
-            if widget_for_history.skip_next_history.replace(false) {
-                widget_for_history.last_snapshot.replace(capture_snapshot(buffer));
                 return;
             }
 
@@ -1613,12 +1623,11 @@ fn build_block_widget(
             if widget_for_key.kind == block_layout::BlockKind::Code
                 && keyval == gtk::gdk::Key::Return
             {
-                if state.contains(gtk::gdk::ModifierType::SHIFT_MASK) {
-                    if let Err(error) = ui.expand_code_block_line(&widget_for_key) {
-                        ui.set_status(&format!("Code block update failed: {error}"));
-                    }
-                }
-                return glib::Propagation::Stop;
+                return if state.contains(gtk::gdk::ModifierType::SHIFT_MASK) {
+                    glib::Propagation::Proceed
+                } else {
+                    glib::Propagation::Stop
+                };
             }
 
             if widget_for_key.kind == block_layout::BlockKind::Text
@@ -3192,6 +3201,11 @@ fn capture_snapshot(buffer: &gtk::TextBuffer) -> EditorSnapshot {
             .to_string(),
         markup: rich_text::serialize_buffer(buffer),
     }
+}
+
+fn code_block_height_for_buffer(buffer: &gtk::TextBuffer) -> i32 {
+    let line_count = buffer.line_count().max(1) as i32;
+    (line_count * CODE_BLOCK_LINE_HEIGHT + CODE_BLOCK_VERTICAL_PADDING).max(CODE_BLOCK_MIN_HEIGHT)
 }
 
 fn build_note_row(ui: &Rc<DriftUi>, note: &NoteSummary, collapsed: bool) -> gtk::ListBoxRow {
