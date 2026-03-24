@@ -119,6 +119,7 @@ struct TextBlockWidget {
     view: gtk::TextView,
     layout: RefCell<block_layout::TextBlockLayout>,
     last_snapshot: RefCell<EditorSnapshot>,
+    skip_next_history: Cell<bool>,
     restoring_history: Cell<bool>,
     hovered: Cell<bool>,
     interacting: Cell<bool>,
@@ -645,9 +646,13 @@ impl DriftUi {
     }
 
     fn update_text_block_layout(&self, block_id: &str, new_layout: block_layout::TextBlockLayout) {
+        let min_units = self
+            .find_text_block(block_id)
+            .map(|widget| block_layout::min_block_units(widget.kind))
+            .unwrap_or(block_layout::min_block_units(block_layout::BlockKind::Text));
         let preview = new_layout
-            .preview_constrained(self.grid_size())
-            .clamp_to_canvas(self.grid_size());
+            .preview_constrained_with_min_units(self.grid_size(), min_units)
+            .clamp_to_canvas_with_min_units(self.grid_size(), min_units);
         self.preview_block_id
             .replace(Some(block_id.to_string()));
         self.preview_layout.replace(Some(preview.clone()));
@@ -658,6 +663,11 @@ impl DriftUi {
         let Some(block_id) = self.preview_block_id.borrow().clone() else {
             return;
         };
+
+        let min_units = self
+            .find_text_block(&block_id)
+            .map(|widget| block_layout::min_block_units(widget.kind))
+            .unwrap_or(block_layout::min_block_units(block_layout::BlockKind::Text));
 
         let finalized = self
             .preview_layout
@@ -670,8 +680,8 @@ impl DriftUi {
                 width: self.grid_size() * 44,
                 height: self.grid_size() * 28,
             })
-            .snapped_to_grid(self.grid_size())
-            .clamp_to_canvas(self.grid_size());
+            .snapped_to_grid_with_min_units(self.grid_size(), min_units)
+            .clamp_to_canvas_with_min_units(self.grid_size(), min_units);
 
         if let Some(widget) = self.find_text_block(&block_id) {
             widget.layout.replace(finalized.clone());
@@ -836,6 +846,7 @@ impl DriftUi {
         self.record_history_checkpoint()?;
 
         let grid_size = self.grid_size();
+        let min_units = block_layout::min_block_units(kind);
         let block = match kind {
             block_layout::BlockKind::Text => block_layout::default_text_block_state(
                 self.next_block_id_for(block_layout::BlockKind::Text),
@@ -856,11 +867,11 @@ impl DriftUi {
                 },
                 height: match kind {
                     block_layout::BlockKind::Text => grid_size * 28,
-                    block_layout::BlockKind::Code => grid_size * 8,
+                    block_layout::BlockKind::Code => grid_size * 5,
                 },
             }
-            .snapped_to_grid(grid_size)
-            .clamp_to_canvas(grid_size),
+            .snapped_to_grid_with_min_units(grid_size, min_units)
+            .clamp_to_canvas_with_min_units(grid_size, min_units),
         );
 
         self.preview_layout.borrow_mut().take();
@@ -915,6 +926,32 @@ impl DriftUi {
                 None
             }
         })
+    }
+
+    fn expand_code_block_line(self: &Rc<Self>, widget: &Rc<TextBlockWidget>) -> orbital_core::OrbitalResult<()> {
+        self.record_history_checkpoint()?;
+        self.set_active_block(Some(widget.id.clone()));
+        widget.skip_next_history.set(true);
+
+        widget.buffer.begin_user_action();
+        widget.buffer.insert_at_cursor("\n");
+
+        let line_step = (self.grid_size() * 4).max(24);
+        let min_units = block_layout::min_block_units(widget.kind);
+        let expanded_layout = block_layout::TextBlockLayout {
+            x: widget.layout.borrow().x,
+            y: widget.layout.borrow().y,
+            width: widget.layout.borrow().width,
+            height: widget.layout.borrow().height + line_step,
+        }
+        .clamp_to_canvas_with_min_units(self.grid_size(), min_units);
+        widget.layout.replace(expanded_layout.clone());
+        self.render_block_layout(widget, &expanded_layout);
+        widget.buffer.end_user_action();
+
+        self.mark_dirty();
+        self.schedule_autosave();
+        Ok(())
     }
 
     fn apply_paragraph_style(
@@ -1447,6 +1484,7 @@ fn build_block_widget(
         view,
         layout: RefCell::new(block.layout()),
         last_snapshot: RefCell::new(initial_snapshot),
+        skip_next_history: Cell::new(false),
         restoring_history: Cell::new(false),
         hovered: Cell::new(false),
         interacting: Cell::new(false),
@@ -1521,6 +1559,11 @@ fn build_block_widget(
                 return;
             }
 
+            if widget_for_history.skip_next_history.replace(false) {
+                widget_for_history.last_snapshot.replace(capture_snapshot(buffer));
+                return;
+            }
+
             let before_snapshot = widget_for_history.last_snapshot.borrow().clone();
             let after_snapshot = capture_snapshot(buffer);
 
@@ -1544,6 +1587,17 @@ fn build_block_widget(
         let key = gtk::EventControllerKey::new();
         key.connect_key_pressed(move |_, keyval, _, state| {
             ui.set_active_block(Some(widget_for_key.id.clone()));
+
+            if widget_for_key.kind == block_layout::BlockKind::Code
+                && keyval == gtk::gdk::Key::Return
+            {
+                if state.contains(gtk::gdk::ModifierType::SHIFT_MASK) {
+                    if let Err(error) = ui.expand_code_block_line(&widget_for_key) {
+                        ui.set_status(&format!("Code block update failed: {error}"));
+                    }
+                }
+                return glib::Propagation::Stop;
+            }
 
             if widget_for_key.kind == block_layout::BlockKind::Text
                 && keyval == gtk::gdk::Key::Return
@@ -1935,8 +1989,8 @@ fn install_app_styles() {
         .drift-window.theme-dark .drift-code-copy {
             background: rgba(101, 69, 186, 0.82);
             border: 1px solid alpha(#c09cff, 0.24);
-            padding: 2px 8px;
-            min-height: 24px;
+            padding: 1px 6px;
+            min-height: 20px;
         }
 
         .drift-window.theme-dark row.page-row:selected {
@@ -2029,8 +2083,8 @@ fn install_app_styles() {
         .drift-window.theme-light .drift-code-copy {
             background: rgba(224, 212, 255, 0.98);
             border: 1px solid alpha(#c6abff, 0.52);
-            padding: 2px 8px;
-            min-height: 24px;
+            padding: 1px 6px;
+            min-height: 20px;
         }
 
         .drift-window.theme-light row.page-row:selected {
