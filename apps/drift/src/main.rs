@@ -961,12 +961,14 @@ impl DriftUi {
         block.id = self.next_block_id_for(block.kind);
         let offset = (self.grid_size() * 2).max(12);
         let min_units = block_layout::min_block_units(block.kind);
+        let duplicated_x = block.x;
+        let duplicated_y = block.y;
         let duplicated_width = block.width;
         let duplicated_height = block.height;
         block = block.with_layout(
             block_layout::TextBlockLayout {
-                x: block.x + offset,
-                y: block.y + offset,
+                x: duplicated_x + offset,
+                y: duplicated_y + offset,
                 width: duplicated_width,
                 height: duplicated_height,
             }
