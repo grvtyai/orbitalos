@@ -246,10 +246,13 @@ This is the first persistent Phase 1 step before capture tooling lands.",
         let sidebar_frame = gtk::Frame::new(None);
         sidebar_frame.set_child(Some(&sidebar));
         sidebar_frame.add_css_class("card");
+        sidebar_frame.set_width_request(320);
+        sidebar_frame.set_hexpand(false);
 
         let detail_frame = gtk::Frame::new(None);
         detail_frame.set_child(Some(&detail_panel));
         detail_frame.add_css_class("card");
+        detail_frame.set_hexpand(true);
 
         layout.append(&sidebar_frame);
         layout.append(&detail_frame);
@@ -306,7 +309,7 @@ This is the first persistent Phase 1 step before capture tooling lands.",
         self.clear_list_box();
 
         for snapshot in &snapshots {
-            self.list_box.append(&build_snapshot_row(snapshot));
+            self.list_box.append(&build_snapshot_row(self, snapshot));
         }
 
         if let Some(target) = selection {
@@ -407,6 +410,24 @@ This is the first persistent Phase 1 step before capture tooling lands.",
         self.detail_id.set_label(snapshot.id.as_str());
         self.update_preview(snapshot.file_path.as_deref());
         self.set_status("Snapshot loaded");
+    }
+
+    fn remove_snapshot(self: &Rc<Self>, snapshot_id: &SnapshotId) -> orbital_core::OrbitalResult<()> {
+        let snapshots = self.snapshots.borrow().clone();
+        let fallback_selection = snapshots
+            .iter()
+            .position(|snapshot| snapshot.id == *snapshot_id)
+            .and_then(|index| {
+                snapshots
+                    .get(index + 1)
+                    .or_else(|| index.checked_sub(1).and_then(|previous| snapshots.get(previous)))
+            })
+            .map(|snapshot| snapshot.id.clone());
+
+        self.repository().archive(snapshot_id)?;
+        self.reload_snapshots(fallback_selection)?;
+        self.set_status("Snapshot deleted");
+        Ok(())
     }
 
     fn show_empty_state(&self) {
@@ -514,7 +535,7 @@ fn connect_actions(ui: &Rc<BlinkUi>, new_button: &gtk::Button, import_button: &g
     }
 }
 
-fn build_snapshot_row(snapshot: &SnapshotSummary) -> gtk::ListBoxRow {
+fn build_snapshot_row(ui: &Rc<BlinkUi>, snapshot: &SnapshotSummary) -> gtk::ListBoxRow {
     let row = gtk::ListBoxRow::new();
     row.set_selectable(true);
     row.set_activatable(true);
@@ -522,10 +543,6 @@ fn build_snapshot_row(snapshot: &SnapshotSummary) -> gtk::ListBoxRow {
     let content = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(6)
-        .margin_top(10)
-        .margin_bottom(10)
-        .margin_start(10)
-        .margin_end(10)
         .build();
 
     let title = gtk::Label::builder()
@@ -550,7 +567,104 @@ fn build_snapshot_row(snapshot: &SnapshotSummary) -> gtk::ListBoxRow {
 
     content.append(&title);
     content.append(&subtitle);
-    row.set_child(Some(&content));
+
+    let delete_button = gtk::Button::builder()
+        .icon_name("window-close-symbolic")
+        .tooltip_text("Delete snapshot")
+        .valign(gtk::Align::Center)
+        .build();
+    delete_button.add_css_class("flat");
+    delete_button.add_css_class("destructive-action");
+    delete_button.set_opacity(0.0);
+    delete_button.set_focus_on_click(false);
+
+    let delete_popover = gtk::Popover::new();
+    delete_popover.set_has_arrow(true);
+    delete_popover.set_autohide(true);
+    delete_popover.set_parent(&delete_button);
+
+    let delete_box = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(8)
+        .margin_top(10)
+        .margin_bottom(10)
+        .margin_start(10)
+        .margin_end(10)
+        .build();
+
+    let delete_label = gtk::Label::builder()
+        .label("Delete?")
+        .xalign(0.0)
+        .build();
+    delete_label.add_css_class("heading");
+
+    let actions = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(8)
+        .build();
+
+    let confirm_button = gtk::Button::with_label("Ja");
+    confirm_button.add_css_class("destructive-action");
+    let cancel_button = gtk::Button::with_label("Nein");
+
+    actions.append(&confirm_button);
+    actions.append(&cancel_button);
+    delete_box.append(&delete_label);
+    delete_box.append(&actions);
+    delete_popover.set_child(Some(&delete_box));
+
+    {
+        let delete_popover = delete_popover.clone();
+        delete_button.connect_clicked(move |_| {
+            delete_popover.popup();
+        });
+    }
+
+    {
+        let delete_popover = delete_popover.clone();
+        cancel_button.connect_clicked(move |_| {
+            delete_popover.popdown();
+        });
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        let delete_popover = delete_popover.clone();
+        let snapshot_id = snapshot.id.clone();
+        confirm_button.connect_clicked(move |_| {
+            if let Err(error) = ui.remove_snapshot(&snapshot_id) {
+                ui.set_status(&format!("Delete failed: {error}"));
+            }
+            delete_popover.popdown();
+        });
+    }
+
+    let row_layout = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(8)
+        .margin_top(10)
+        .margin_bottom(10)
+        .margin_start(10)
+        .margin_end(10)
+        .build();
+    content.set_hexpand(true);
+    row_layout.append(&content);
+    row_layout.append(&delete_button);
+
+    {
+        let delete_button = delete_button.clone();
+        let hover = gtk::EventControllerMotion::new();
+        hover.connect_enter(move |_, _, _| {
+            delete_button.set_opacity(1.0);
+        });
+        let delete_button_leave = delete_button.clone();
+        hover.connect_leave(move |_| {
+            delete_button_leave.set_opacity(0.0);
+        });
+        row_layout.add_controller(hover);
+    }
+
+    row.set_child(Some(&row_layout));
     row
 }
 

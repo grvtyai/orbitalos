@@ -153,6 +153,29 @@ impl<'connection> SnapshotRepository<'connection> {
         Ok(snapshots)
     }
 
+    pub fn archive(&self, id: &SnapshotId) -> OrbitalResult<()> {
+        let now = current_unix_timestamp()?;
+
+        let updated_rows = self.connection.execute(
+            "
+            UPDATE snapshots
+            SET archived_at = ?1, updated_at = ?1
+            WHERE id = ?2 AND archived_at IS NULL
+            ",
+            params![now, id.as_str()],
+        )?;
+
+        if updated_rows == 0 {
+            return Err(OrbitalError::NotFound {
+                entity: SNAPSHOT_ENTITY_TYPE,
+                id: id.to_string(),
+            });
+        }
+
+        self.record_change(id, "archived", now)?;
+        Ok(())
+    }
+
     fn load_tags(&self, id: &SnapshotId) -> OrbitalResult<Vec<String>> {
         let mut statement = self.connection.prepare(
             "
