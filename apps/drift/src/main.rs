@@ -912,18 +912,91 @@ impl DriftUi {
         self.preview_layout.borrow_mut().take();
         self.preview_block_id.borrow_mut().take();
         self.text_block_preview_frame.set_visible(false);
-        let widget = build_block_widget(self, &block);
-        self.body_canvas_fixed.put(&widget.frame, 0.0, 0.0);
-        self.text_blocks.borrow_mut().push(widget.clone());
-        self.active_block_id.replace(Some(block.id.clone()));
-        self.render_block_layout(&widget, &block.layout());
-        self.sync_block_chrome(&widget);
+        let widget = self.append_block_widget(&block);
         widget.view.grab_focus();
         self.mark_dirty();
         self.save_immediately(match kind {
             block_layout::BlockKind::Text => "Text block created",
             block_layout::BlockKind::Code => "Code block created",
         })
+    }
+
+    fn append_block_widget(self: &Rc<Self>, block: &block_layout::TextBlockState) -> Rc<TextBlockWidget> {
+        let widget = build_block_widget(self, block);
+        self.body_canvas_fixed.put(&widget.frame, 0.0, 0.0);
+        self.text_blocks.borrow_mut().push(widget.clone());
+        self.active_block_id.replace(Some(block.id.clone()));
+        self.render_block_layout(&widget, &block.layout());
+        self.sync_block_chrome(&widget);
+        widget
+    }
+
+    fn snapshot_block_state(widget: &TextBlockWidget) -> block_layout::TextBlockState {
+        block_layout::TextBlockState {
+            kind: widget.kind,
+            id: widget.id.clone(),
+            x: widget.layout.borrow().x,
+            y: widget.layout.borrow().y,
+            width: widget.layout.borrow().width,
+            height: widget.layout.borrow().height,
+            body: widget
+                .buffer
+                .text(&widget.buffer.start_iter(), &widget.buffer.end_iter(), true)
+                .to_string(),
+            body_markup: match widget.kind {
+                block_layout::BlockKind::Text => rich_text::serialize_buffer(&widget.buffer),
+                block_layout::BlockKind::Code => None,
+            },
+        }
+    }
+
+    fn duplicate_block(self: &Rc<Self>, block_id: &str) -> orbital_core::OrbitalResult<()> {
+        let Some(source_widget) = self.find_text_block(block_id) else {
+            return Ok(());
+        };
+
+        self.record_history_checkpoint()?;
+
+        let mut block = Self::snapshot_block_state(&source_widget);
+        block.id = self.next_block_id_for(block.kind);
+        let offset = (self.grid_size() * 2).max(12);
+        let min_units = block_layout::min_block_units(block.kind);
+        block = block.with_layout(
+            block_layout::TextBlockLayout {
+                x: block.x + offset,
+                y: block.y + offset,
+                width: block.width,
+                height: block.height,
+            }
+            .clamp_to_canvas_with_min_units(self.grid_size(), min_units),
+        );
+
+        let duplicated_widget = self.append_block_widget(&block);
+        duplicated_widget.view.grab_focus();
+        self.mark_dirty();
+        self.save_immediately("Block duplicated")
+    }
+
+    fn delete_block(self: &Rc<Self>, block_id: &str) -> orbital_core::OrbitalResult<()> {
+        let Some(widget) = self.find_text_block(block_id) else {
+            return Ok(());
+        };
+
+        self.record_history_checkpoint()?;
+        self.body_canvas_fixed.remove(&widget.frame);
+
+        let remaining = {
+            let mut blocks = self.text_blocks.borrow_mut();
+            blocks.retain(|candidate| candidate.id != block_id);
+            blocks.clone()
+        };
+
+        self.active_block_id.replace(remaining.last().map(|block| block.id.clone()));
+        self.preview_layout.borrow_mut().take();
+        self.preview_block_id.borrow_mut().take();
+        self.text_block_preview_frame.set_visible(false);
+        self.mark_dirty();
+        self.save_immediately("Block deleted")
     }
 
     fn next_block_id_for(&self, kind: block_layout::BlockKind) -> String {
@@ -984,7 +1057,9 @@ impl DriftUi {
         .clamp_to_canvas_with_min_units(self.grid_size(), min_units);
 
         widget.layout.replace(adjusted_layout.clone());
-        self.render_block_layout(widget, &adjusted_layout);
+        if widget.frame.parent().as_ref() == Some(self.body_canvas_fixed.upcast_ref()) {
+            self.render_block_layout(widget, &adjusted_layout);
+        }
     }
 
     fn apply_paragraph_style(
@@ -1522,10 +1597,6 @@ fn build_block_widget(
         interacting: Cell::new(false),
     });
 
-    if widget.kind == block_layout::BlockKind::Code {
-        ui.sync_code_block_height(&widget);
-    }
-
     {
         let ui = Rc::clone(ui);
         let widget_for_focus = Rc::clone(&widget);
@@ -1661,6 +1732,73 @@ fn build_block_widget(
             ui_for_leave.sync_block_chrome(&widget_for_leave);
         });
         widget.frame.add_controller(hover);
+    }
+
+    {
+        let menu_popover = gtk::Popover::new();
+        menu_popover.set_parent(&widget.frame);
+        menu_popover.set_has_arrow(true);
+        menu_popover.set_autohide(true);
+        menu_popover.set_position(gtk::PositionType::Bottom);
+        menu_popover.add_css_class("drift-popover");
+
+        let menu_box = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(4)
+            .margin_top(8)
+            .margin_bottom(8)
+            .margin_start(8)
+            .margin_end(8)
+            .build();
+        menu_box.add_css_class("drift-popover-menu");
+
+        let duplicate_button = gtk::Button::with_label("Duplicate");
+        let delete_button = gtk::Button::with_label("Delete");
+        delete_button.add_css_class("destructive-action");
+
+        menu_box.append(&duplicate_button);
+        menu_box.append(&delete_button);
+        menu_popover.set_child(Some(&menu_box));
+
+        {
+            let ui = Rc::clone(ui);
+            let menu_popover = menu_popover.clone();
+            let block_id = widget.id.clone();
+            duplicate_button.connect_clicked(move |_| {
+                if let Err(error) = ui.duplicate_block(&block_id) {
+                    ui.set_status(&format!("Duplicate failed: {error}"));
+                }
+                menu_popover.popdown();
+            });
+        }
+
+        {
+            let ui = Rc::clone(ui);
+            let menu_popover = menu_popover.clone();
+            let block_id = widget.id.clone();
+            delete_button.connect_clicked(move |_| {
+                menu_popover.popdown();
+                if let Err(error) = ui.delete_block(&block_id) {
+                    ui.set_status(&format!("Delete failed: {error}"));
+                }
+            });
+        }
+
+        {
+            let menu_popover = menu_popover.clone();
+            let right_click = gtk::GestureClick::new();
+            right_click.set_button(3);
+            right_click.connect_pressed(move |_, _, x, y| {
+                menu_popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(
+                    x.round() as i32,
+                    y.round() as i32,
+                    1,
+                    1,
+                )));
+                menu_popover.popup();
+            });
+            widget.frame.add_controller(right_click);
+        }
     }
 
     {
