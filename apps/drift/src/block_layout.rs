@@ -5,13 +5,13 @@ pub const CANVAS_HEIGHT: i32 = 1200;
 pub const DEFAULT_GRID_SIZE: i32 = 8;
 
 const MIN_TEXT_BLOCK_UNITS: i32 = 8;
-const MIN_CODE_BLOCK_UNITS: i32 = 5;
+const MIN_CODE_BLOCK_UNITS: i32 = 4;
 const DEFAULT_BLOCK_X_UNITS: i32 = 3;
 const DEFAULT_BLOCK_Y_UNITS: i32 = 3;
 const DEFAULT_BLOCK_WIDTH_UNITS: i32 = 68;
 const DEFAULT_BLOCK_HEIGHT_UNITS: i32 = 48;
 const DEFAULT_CODE_BLOCK_WIDTH_UNITS: i32 = 52;
-const DEFAULT_CODE_BLOCK_HEIGHT_UNITS: i32 = 5;
+const DEFAULT_CODE_BLOCK_HEIGHT_UNITS: i32 = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteCanvasLayout {
@@ -94,19 +94,11 @@ pub struct TextBlockLayout {
 }
 
 impl TextBlockLayout {
-    pub fn preview_constrained(mut self, grid_size: i32) -> Self {
-        self.preview_constrained_with_min_units(grid_size, MIN_TEXT_BLOCK_UNITS)
-    }
-
     pub fn preview_constrained_with_min_units(mut self, grid_size: i32, min_units: i32) -> Self {
         let min_size = normalized_grid_size(grid_size) * min_units.max(1);
         self.width = self.width.max(min_size);
         self.height = self.height.max(min_size);
         self
-    }
-
-    pub fn snapped_to_grid(mut self, grid_size: i32) -> Self {
-        self.snapped_to_grid_with_min_units(grid_size, MIN_TEXT_BLOCK_UNITS)
     }
 
     pub fn snapped_to_grid_with_min_units(mut self, grid_size: i32, min_units: i32) -> Self {
@@ -121,10 +113,6 @@ impl TextBlockLayout {
         self.width = (snapped_right - snapped_left).max(grid_size * min_units.max(1));
         self.height = (snapped_bottom - snapped_top).max(grid_size * min_units.max(1));
         self
-    }
-
-    pub fn clamp_to_canvas(mut self, grid_size: i32) -> Self {
-        self.clamp_to_canvas_with_min_units(grid_size, MIN_TEXT_BLOCK_UNITS)
     }
 
     pub fn clamp_to_canvas_with_min_units(mut self, grid_size: i32, min_units: i32) -> Self {

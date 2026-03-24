@@ -603,7 +603,14 @@ impl DriftUi {
 
     fn apply_canvas_layout(&self) {
         for widget in self.text_blocks.borrow().iter() {
-            let layout = widget.layout.borrow().clone().clamp_to_canvas(self.grid_size());
+            let layout = widget
+                .layout
+                .borrow()
+                .clone()
+                .clamp_to_canvas_with_min_units(
+                    self.grid_size(),
+                    block_layout::min_block_units(widget.kind),
+                );
             self.render_block_layout(widget, &layout);
         }
     }
@@ -699,7 +706,10 @@ impl DriftUi {
             .layout
             .borrow()
             .clone()
-            .clamp_to_canvas(self.grid_size());
+            .clamp_to_canvas_with_min_units(
+                self.grid_size(),
+                block_layout::min_block_units(widget.kind),
+            );
         self.preview_block_id
             .replace(Some(block_id.to_string()));
         self.preview_layout.replace(Some(current_layout.clone()));
@@ -805,12 +815,24 @@ impl DriftUi {
     fn current_text_block_layout(&self, block_id: &str) -> Option<block_layout::TextBlockLayout> {
         if self.preview_block_id.borrow().as_deref() == Some(block_id) {
             if let Some(layout) = self.preview_layout.borrow().clone() {
-                return Some(layout.clamp_to_canvas(self.grid_size()));
+                let min_units = self
+                    .find_text_block(block_id)
+                    .map(|widget| block_layout::min_block_units(widget.kind))
+                    .unwrap_or(block_layout::min_block_units(block_layout::BlockKind::Text));
+                return Some(layout.clamp_to_canvas_with_min_units(self.grid_size(), min_units));
             }
         }
 
-        self.find_text_block(block_id)
-            .map(|widget| widget.layout.borrow().clone().clamp_to_canvas(self.grid_size()))
+        self.find_text_block(block_id).map(|widget| {
+            widget
+                .layout
+                .borrow()
+                .clone()
+                .clamp_to_canvas_with_min_units(
+                    self.grid_size(),
+                    block_layout::min_block_units(widget.kind),
+                )
+        })
     }
 
     fn point_hits_any_block(&self, x: f64, y: f64) -> bool {
@@ -867,7 +889,7 @@ impl DriftUi {
                 },
                 height: match kind {
                     block_layout::BlockKind::Text => grid_size * 28,
-                    block_layout::BlockKind::Code => grid_size * 5,
+                    block_layout::BlockKind::Code => grid_size * 4,
                 },
             }
             .snapped_to_grid_with_min_units(grid_size, min_units)
@@ -936,7 +958,7 @@ impl DriftUi {
         widget.buffer.begin_user_action();
         widget.buffer.insert_at_cursor("\n");
 
-        let line_step = (self.grid_size() * 4).max(24);
+        let line_step = (self.grid_size() * 3).max(20);
         let min_units = block_layout::min_block_units(widget.kind);
         let expanded_layout = block_layout::TextBlockLayout {
             x: widget.layout.borrow().x,
@@ -1336,16 +1358,16 @@ fn build_block_widget(
         })
         .top_margin(match block.kind {
             block_layout::BlockKind::Text => 12,
-            block_layout::BlockKind::Code => 10,
+            block_layout::BlockKind::Code => 6,
         })
         .bottom_margin(match block.kind {
             block_layout::BlockKind::Text => 12,
-            block_layout::BlockKind::Code => 10,
+            block_layout::BlockKind::Code => 6,
         })
         .left_margin(12)
         .right_margin(match block.kind {
             block_layout::BlockKind::Text => 12,
-            block_layout::BlockKind::Code => 84,
+            block_layout::BlockKind::Code => 72,
         })
         .monospace(matches!(block.kind, block_layout::BlockKind::Code))
         .vexpand(true)
