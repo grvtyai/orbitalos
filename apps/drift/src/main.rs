@@ -250,9 +250,7 @@ impl DriftUi {
             .icon_name("preferences-system-symbolic")
             .tooltip_text("Settings")
             .build();
-        settings_button.add_css_class("titlebutton");
-        settings_button.add_css_class("image-button");
-        settings_button.add_css_class("flat");
+        settings_button.add_css_class("header-action");
 
         let window = build_window(
             app,
@@ -1638,7 +1636,7 @@ fn build_window(
     header_bar.pack_start(undo_button);
     header_bar.pack_start(redo_button);
     header_bar.pack_start(edit_button);
-    header_bar.pack_end(settings_button);
+    header_bar.pack_start(settings_button);
     header_bar.set_title_widget(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
 
     let content = gtk::Box::builder()
@@ -1799,7 +1797,7 @@ fn install_app_styles() {
 
         .drift-window.theme-dark .header-action,
         .drift-window.theme-dark .pill,
-        .drift-window.theme-dark button:not(.destructive-action):not(.titlebutton) {
+        .drift-window.theme-dark button:not(.destructive-action) {
             background: rgba(84, 57, 160, 0.74);
             border: 1px solid alpha(#b28fff, 0.18);
         }
@@ -1868,7 +1866,7 @@ fn install_app_styles() {
 
         .drift-window.theme-light .header-action,
         .drift-window.theme-light .pill,
-        .drift-window.theme-light button:not(.destructive-action):not(.titlebutton) {
+        .drift-window.theme-light button:not(.destructive-action) {
             background: rgba(233, 222, 255, 0.98);
             border: 1px solid alpha(#ceb4ff, 0.44);
             color: #795dc4;
