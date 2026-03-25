@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use ashpd::desktop::screenshot::Screenshot;
+use ashpd::url::Url;
 
 pub async fn capture_interactive() -> Result<PathBuf, String> {
     let response = Screenshot::request()
@@ -12,8 +13,8 @@ pub async fn capture_interactive() -> Result<PathBuf, String> {
         .response()
         .map_err(|error| format!("Screenshot portal response failed: {error}"))?;
 
-    response
-        .uri()
+    Url::parse(&response.uri().to_string())
+        .map_err(|error| format!("Screenshot portal returned an invalid URI: {error}"))?
         .to_file_path()
         .map_err(|_| "Screenshot portal returned a non-file URI.".to_string())
 }
