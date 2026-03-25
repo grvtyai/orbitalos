@@ -10,3 +10,4 @@ ashpd = { version = "0.13.7", default-features = false, features = ["async-io", 
 libadwaita = "0.8.1"
 gtk = { version = "0.10.3", package = "gtk4" }
 orbital-core = { path = "../../crates/orbital-core" }
+url = "2.5"

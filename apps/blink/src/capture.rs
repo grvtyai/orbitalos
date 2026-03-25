@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use ashpd::desktop::screenshot::Screenshot;
-use ashpd::url::Url;
+use url::Url;
 
 pub async fn capture_interactive() -> Result<PathBuf, String> {
     let response = Screenshot::request()
