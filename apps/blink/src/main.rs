@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -12,6 +12,8 @@ use orbital_core::{
     NewSnapshot, OrbitalApp, OrbitalDatabase, OrbitalPaths, SnapshotId, SnapshotKind,
     SnapshotRepository, SnapshotSummary,
 };
+
+mod capture;
 
 const PREVIEW_MAX_WIDTH: i32 = 520;
 const PREVIEW_MAX_HEIGHT: i32 = 280;
@@ -112,11 +114,17 @@ impl BlinkUi {
             .tooltip_text("Import Image")
             .build();
 
+        let capture_button = gtk::Button::builder()
+            .icon_name("camera-photo-symbolic")
+            .tooltip_text("Capture Screenshot")
+            .build();
+
         let header_bar = adw::HeaderBar::builder()
             .title_widget(&header_title)
             .build();
         header_bar.pack_start(&new_button);
         header_bar.pack_start(&import_button);
+        header_bar.pack_start(&capture_button);
 
         let list_box = gtk::ListBox::builder()
             .selection_mode(gtk::SelectionMode::Single)
@@ -360,7 +368,14 @@ This is the first persistent Phase 1 step before capture tooling lands.",
         window.set_content(Some(&content));
         ui.window.replace(Some(window.clone()));
 
-        connect_actions(&ui, &new_button, &import_button, &save_button, &copy_button);
+        connect_actions(
+            &ui,
+            &new_button,
+            &import_button,
+            &capture_button,
+            &save_button,
+            &copy_button,
+        );
         ui.reload_snapshots(None)?;
 
         Ok(window)
@@ -441,17 +456,67 @@ This is the first persistent Phase 1 step before capture tooling lands.",
             .filter(|value| !value.trim().is_empty())
             .unwrap_or("Imported image");
 
+        self.create_image_snapshot(
+            snapshot_id,
+            title.to_string(),
+            target_path,
+            Some(source_path.display().to_string()),
+        )?;
+        self.set_status("Image imported");
+        Ok(())
+    }
+
+    fn capture_screenshot(self: &Rc<Self>) -> orbital_core::OrbitalResult<()> {
+        let capture_dir = self.paths.app_data_dir(OrbitalApp::Blink).join("captures");
+        fs::create_dir_all(&capture_dir)?;
+
+        let snapshot_id = generate_snapshot_id();
+        let target_path = capture_dir.join(format!("{}.png", snapshot_id.as_str()));
+        let capture_title = format!("Screenshot {}", current_timestamp_label());
+
+        let backend = match capture::capture_region(&target_path) {
+            Ok(backend) => backend,
+            Err(error) => {
+                if target_path.exists() {
+                    let _ = fs::remove_file(&target_path);
+                }
+                self.set_status(&error);
+                return Ok(());
+            }
+        };
+
+        if !target_path.exists() {
+            self.set_status("Capture failed: screenshot file was not created");
+            return Ok(());
+        }
+
+        self.create_image_snapshot(
+            snapshot_id,
+            capture_title,
+            target_path,
+            Some(format!("Captured with {}", backend.label())),
+        )?;
+        self.set_status("Screenshot captured");
+        Ok(())
+    }
+
+    fn create_image_snapshot(
+        self: &Rc<Self>,
+        snapshot_id: SnapshotId,
+        title: String,
+        stored_path: PathBuf,
+        source: Option<String>,
+    ) -> orbital_core::OrbitalResult<SnapshotSummary> {
         let mut new_snapshot = NewSnapshot::new(snapshot_id.clone(), title, SnapshotKind::Image);
-        new_snapshot.source = Some(source_path.display().to_string());
-        new_snapshot.file_path = Some(target_path.display().to_string());
-        new_snapshot.mime_type = infer_mime_type(source_path);
+        new_snapshot.source = source;
+        new_snapshot.file_path = Some(stored_path.display().to_string());
+        new_snapshot.mime_type = infer_mime_type(&stored_path);
 
         let snapshot = self.repository().create(new_snapshot)?;
         self.selected_snapshot_id
             .replace(Some(snapshot.id.clone()));
         self.reload_snapshots(Some(snapshot.id.clone()))?;
-        self.set_status("Image imported");
-        Ok(())
+        Ok(snapshot)
     }
 
     fn load_snapshot_into_detail(self: &Rc<Self>, index: usize) {
@@ -631,6 +696,7 @@ fn connect_actions(
     ui: &Rc<BlinkUi>,
     new_button: &gtk::Button,
     import_button: &gtk::Button,
+    capture_button: &gtk::Button,
     save_button: &gtk::Button,
     copy_button: &gtk::Button,
 ) {
@@ -694,6 +760,15 @@ fn connect_actions(
 
             ui.import_dialog.replace(Some(dialog.clone()));
             dialog.show();
+        });
+    }
+
+    {
+        let ui = Rc::clone(ui);
+        capture_button.connect_clicked(move |_| {
+            if let Err(error) = ui.capture_screenshot() {
+                ui.set_status(&format!("Capture failed: {error}"));
+            }
         });
     }
 
@@ -907,4 +982,11 @@ fn preview_size_for(image_width: i32, image_height: i32) -> (i32, i32) {
     let target_height = (height * scale).round() as i32;
 
     (target_width.max(1), target_height.max(1))
+}
+
+fn current_timestamp_label() -> String {
+    gtk::glib::DateTime::now_local()
+        .and_then(|value| value.format("%d.%m.%Y %H:%M"))
+        .map(|value| value.to_string())
+        .unwrap_or_else(|_| "now".to_string())
 }
