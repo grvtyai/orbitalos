@@ -139,8 +139,8 @@ impl BlinkUi {
 
         let sidebar_body = gtk::Label::builder()
             .label(
-                "Blink now stores snapshot entries through orbital-core. \
-This is the first persistent Phase 1 step before capture tooling lands.",
+                "Blink stores snapshots through orbital-core and now has a simple \
+portal-based screenshot flow for the first real captures.",
             )
             .wrap(true)
             .xalign(0.0)
@@ -466,35 +466,41 @@ This is the first persistent Phase 1 step before capture tooling lands.",
         Ok(())
     }
 
-    fn capture_screenshot(self: &Rc<Self>) -> orbital_core::OrbitalResult<()> {
+    fn capture_screenshot(self: &Rc<Self>) {
+        self.set_status("Waiting for screenshot selection...");
+
+        let ui = Rc::clone(self);
+        gtk::glib::MainContext::default().spawn_local(async move {
+            match capture::capture_interactive().await {
+                Ok(source_path) => {
+                    if let Err(error) = ui.store_captured_image(&source_path) {
+                        ui.set_status(&format!("Capture failed: {error}"));
+                    }
+                }
+                Err(error) => ui.set_status(&error),
+            }
+        });
+    }
+
+    fn store_captured_image(self: &Rc<Self>, source_path: &Path) -> orbital_core::OrbitalResult<()> {
         let capture_dir = self.paths.app_data_dir(OrbitalApp::Blink).join("captures");
         fs::create_dir_all(&capture_dir)?;
 
         let snapshot_id = generate_snapshot_id();
-        let target_path = capture_dir.join(format!("{}.png", snapshot_id.as_str()));
-        let capture_title = format!("Screenshot {}", current_timestamp_label());
+        let extension = source_path
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| value.to_ascii_lowercase())
+            .unwrap_or_else(|| "png".to_string());
+        let target_path = capture_dir.join(format!("{}.{}", snapshot_id.as_str(), extension));
 
-        let backend = match capture::capture_region(&target_path) {
-            Ok(backend) => backend,
-            Err(error) => {
-                if target_path.exists() {
-                    let _ = fs::remove_file(&target_path);
-                }
-                self.set_status(&error);
-                return Ok(());
-            }
-        };
-
-        if !target_path.exists() {
-            self.set_status("Capture failed: screenshot file was not created");
-            return Ok(());
-        }
+        fs::copy(source_path, &target_path)?;
 
         self.create_image_snapshot(
             snapshot_id,
-            capture_title,
+            format!("Screenshot {}", current_timestamp_label()),
             target_path,
-            Some(format!("Captured with {}", backend.label())),
+            Some("Captured with XDG Desktop Portal".to_string()),
         )?;
         self.set_status("Screenshot captured");
         Ok(())
@@ -766,9 +772,7 @@ fn connect_actions(
     {
         let ui = Rc::clone(ui);
         capture_button.connect_clicked(move |_| {
-            if let Err(error) = ui.capture_screenshot() {
-                ui.set_status(&format!("Capture failed: {error}"));
-            }
+            ui.capture_screenshot();
         });
     }
 
