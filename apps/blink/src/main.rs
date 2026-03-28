@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use adw::prelude::*;
 use gtk::prelude::*;
@@ -473,6 +473,7 @@ portal-based screenshot flow for the first real captures.",
         gtk::glib::MainContext::default().spawn_local(async move {
             match capture::capture_interactive().await {
                 Ok(source_path) => {
+                    ui.set_status("Processing screenshot...");
                     if let Err(error) = ui.store_captured_image(&source_path) {
                         ui.set_status(&format!("Capture failed: {error}"));
                     }
@@ -485,6 +486,7 @@ portal-based screenshot flow for the first real captures.",
     fn store_captured_image(self: &Rc<Self>, source_path: &Path) -> orbital_core::OrbitalResult<()> {
         let capture_dir = self.paths.app_data_dir(OrbitalApp::Blink).join("captures");
         fs::create_dir_all(&capture_dir)?;
+        wait_for_file_ready(source_path)?;
 
         let snapshot_id = generate_snapshot_id();
         let extension = source_path
@@ -958,6 +960,40 @@ fn file_label(path: &str) -> String {
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(path)
         .to_string()
+}
+
+fn wait_for_file_ready(path: &Path) -> orbital_core::OrbitalResult<()> {
+    let mut last_error = None;
+
+    for _ in 0..20 {
+        match fs::metadata(path) {
+            Ok(metadata) if metadata.is_file() && metadata.len() > 0 => {
+                if fs::File::open(path).is_ok() {
+                    return Ok(());
+                }
+            }
+            Ok(_) => {
+                last_error = Some(std::io::Error::new(
+                    std::io::ErrorKind::WouldBlock,
+                    format!("Screenshot file is not ready yet: {}", path.display()),
+                ));
+            }
+            Err(error) => {
+                last_error = Some(error);
+            }
+        }
+
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    Err(last_error
+        .unwrap_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("Screenshot file did not become ready: {}", path.display()),
+            )
+        })
+        .into())
 }
 
 fn parse_tags(raw: &str) -> Vec<String> {
