@@ -7,7 +7,7 @@ pub fn capture_interactive(target_path: &Path) -> Result<(), String> {
         Ok(()) => Ok(()),
         Err(CaptureError::BackendUnavailable(_)) => capture_with_grim(target_path).map_err(|error| {
             format!(
-                "{error}. Install `gnome-screenshot` or `grim` + `slurp` to enable Blink capture."
+                "{error}. Run `scripts/bootstrap-ubuntu-lts.sh` or install `gnome-screenshot` or `grim` + `slurp` to enable Blink capture."
             )
         }),
         Err(error) => Err(error.to_string()),

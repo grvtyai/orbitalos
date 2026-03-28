@@ -92,6 +92,7 @@ This installs the current OrbitalOS base development dependencies:
 - build tools
 - GTK4 + Libadwaita development packages
 - SQLite development packages
+- screenshot capture tools for Blink: `grim` + `slurp`
 - Rust via `rustup`
 
 If you want to install the toolchain and immediately clone and test the repo on
@@ -106,6 +107,9 @@ If the repo already exists on the VM, use:
 ```bash
 cd ~/orbitalos && git pull && source "$HOME/.cargo/env" && cargo check -p orbital-core && cargo test -p orbital-core
 ```
+
+If `Blink` adds new Ubuntu package requirements later, rerun the bootstrap
+script after `git pull` so system dependencies stay in sync.
 
 ## First Development Goal
 

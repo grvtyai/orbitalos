@@ -18,6 +18,8 @@ APT_PACKAGES=(
   pkg-config
   curl
   git
+  grim
+  slurp
   sqlite3
   libgtk-4-dev
   libadwaita-1-dev
@@ -52,4 +54,3 @@ echo
 echo "OrbitalOS Ubuntu LTS bootstrap complete."
 echo "Next step:"
 echo "  cargo check"
-

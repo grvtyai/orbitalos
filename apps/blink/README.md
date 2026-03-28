@@ -23,6 +23,7 @@ Current `Blink` already includes:
 - a local snapshot library with sidebar list and detail panel
 - manual `New Snapshot` creation for storage and UI testing
 - `Import Image` with file copy into Blink app data storage
+- direct screenshot capture into the Blink app data directory
 - image preview, file path, and MIME type details
 - hover delete action with confirmation dialog
 
@@ -50,6 +51,12 @@ The product plan is currently grouped like this:
 curl -fsSL https://raw.githubusercontent.com/grvtyai/orbitalos/main/scripts/bootstrap-ubuntu-lts.sh | bash
 ```
 
+This bootstrap currently installs the Linux capture tools Blink expects for
+simple direct screenshots:
+
+- `grim`
+- `slurp`
+
 From the repo root on Ubuntu LTS:
 
 ```bash
@@ -63,6 +70,9 @@ If the repo is already cloned and you want the full refresh flow:
 ```bash
 cd ~/orbitalos && git pull && source "$HOME/.cargo/env" && cargo check -p blink && GSK_RENDERER=cairo LIBGL_ALWAYS_SOFTWARE=1 cargo run -p blink
 ```
+
+If Blink's Linux capture requirements change, rerun the bootstrap script after
+pulling so the Ubuntu VM gets the updated packages as well.
 
 ## Storage
 
