@@ -18,6 +18,7 @@ APT_PACKAGES=(
   pkg-config
   curl
   git
+  gnome-screenshot
   grim
   slurp
   sqlite3

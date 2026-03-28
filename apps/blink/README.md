@@ -54,8 +54,12 @@ curl -fsSL https://raw.githubusercontent.com/grvtyai/orbitalos/main/scripts/boot
 This bootstrap currently installs the Linux capture tools Blink expects for
 simple direct screenshots:
 
+- `gnome-screenshot`
 - `grim`
 - `slurp`
+
+On Ubuntu GNOME, `gnome-screenshot` is the primary capture backend.
+`grim` + `slurp` are kept as a fallback for wlroots-style Wayland setups.
 
 From the repo root on Ubuntu LTS:
 

@@ -92,7 +92,8 @@ This installs the current OrbitalOS base development dependencies:
 - build tools
 - GTK4 + Libadwaita development packages
 - SQLite development packages
-- screenshot capture tools for Blink: `grim` + `slurp`
+- screenshot capture tools for Blink on Ubuntu: `gnome-screenshot`
+- optional Wayland wlroots fallback tools: `grim` + `slurp`
 - Rust via `rustup`
 
 If you want to install the toolchain and immediately clone and test the repo on
