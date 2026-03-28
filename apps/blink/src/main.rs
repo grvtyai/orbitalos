@@ -14,6 +14,7 @@ use orbital_core::{
 };
 
 mod capture;
+mod settings;
 
 const PREVIEW_MAX_WIDTH: i32 = 520;
 const PREVIEW_MAX_HEIGHT: i32 = 280;
@@ -75,6 +76,7 @@ struct BlinkUi {
     paths: OrbitalPaths,
     window: RefCell<Option<adw::ApplicationWindow>>,
     import_dialog: RefCell<Option<gtk::FileChooserNative>>,
+    settings: RefCell<settings::BlinkSettings>,
     list_box: gtk::ListBox,
     preview_frame: gtk::Frame,
     preview_image: gtk::Picture,
@@ -95,36 +97,33 @@ struct BlinkUi {
 impl BlinkUi {
     fn build(app: &adw::Application) -> orbital_core::OrbitalResult<adw::ApplicationWindow> {
         let paths = OrbitalPaths::discover()?;
+        let app_settings = settings::BlinkSettings::load(&paths);
         let database = OrbitalDatabase::open(&paths)?;
         let app_descriptor = OrbitalApp::Blink.descriptor();
-
-        let header_title = adw::WindowTitle::builder()
-            .title(app_descriptor.display_name)
-            .subtitle("Phase 1 snapshot library")
-            .build();
 
         let new_button = gtk::Button::builder()
             .icon_name("list-add-symbolic")
             .tooltip_text("New Snapshot")
             .build();
-        new_button.add_css_class("suggested-action");
+        new_button.add_css_class("header-action");
 
         let import_button = gtk::Button::builder()
             .icon_name("folder-open-symbolic")
             .tooltip_text("Import Image")
             .build();
+        import_button.add_css_class("header-action");
 
         let capture_button = gtk::Button::builder()
             .icon_name("camera-photo-symbolic")
             .tooltip_text("Capture Screenshot")
             .build();
+        capture_button.add_css_class("header-action");
 
-        let header_bar = adw::HeaderBar::builder()
-            .title_widget(&header_title)
+        let settings_button = gtk::Button::builder()
+            .icon_name("preferences-system-symbolic")
+            .tooltip_text("Settings")
             .build();
-        header_bar.pack_start(&new_button);
-        header_bar.pack_start(&import_button);
-        header_bar.pack_start(&capture_button);
+        settings_button.add_css_class("header-action");
 
         let list_box = gtk::ListBox::builder()
             .selection_mode(gtk::SelectionMode::Single)
@@ -164,6 +163,7 @@ direct captures into its own local snapshot library.",
             .margin_end(18)
             .width_request(320)
             .build();
+        sidebar.add_css_class("blink-sidebar");
         sidebar.set_vexpand(true);
         sidebar.append(&sidebar_title);
         sidebar.append(&sidebar_body);
@@ -303,17 +303,13 @@ direct captures into its own local snapshot library.",
             .margin_start(24)
             .margin_end(24)
             .build();
+        detail_panel.add_css_class("blink-detail");
         detail_panel.append(&detail_heading);
         detail_panel.append(&detail_created_at);
         detail_panel.append(&preview_frame);
         detail_panel.append(&action_box);
         detail_panel.append(&metadata_split);
         detail_panel.append(&status_label);
-
-        let content = gtk::Box::builder()
-            .orientation(gtk::Orientation::Vertical)
-            .build();
-        content.append(&header_bar);
 
         let layout = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
@@ -325,23 +321,25 @@ direct captures into its own local snapshot library.",
         let sidebar_frame = gtk::Frame::new(None);
         sidebar_frame.set_child(Some(&sidebar));
         sidebar_frame.add_css_class("card");
+        sidebar_frame.add_css_class("blink-surface");
         sidebar_frame.set_width_request(320);
         sidebar_frame.set_hexpand(false);
 
         let detail_frame = gtk::Frame::new(None);
         detail_frame.set_child(Some(&detail_panel));
         detail_frame.add_css_class("card");
+        detail_frame.add_css_class("blink-surface");
         detail_frame.set_hexpand(true);
 
         layout.append(&sidebar_frame);
         layout.append(&detail_frame);
-        content.append(&layout);
 
         let ui = Rc::new(Self {
             database,
             paths,
             window: RefCell::new(None),
             import_dialog: RefCell::new(None),
+            settings: RefCell::new(app_settings),
             list_box,
             preview_frame,
             preview_image,
@@ -359,22 +357,28 @@ direct captures into its own local snapshot library.",
             selected_snapshot_id: RefCell::new(None),
         });
 
-        let window = adw::ApplicationWindow::builder()
-            .application(app)
-            .title(app_descriptor.display_name)
-            .default_width(1080)
-            .default_height(720)
-            .build();
-        window.set_content(Some(&content));
+        let window = build_window(
+            app,
+            &ui,
+            app_descriptor.display_name,
+            &new_button,
+            &import_button,
+            &capture_button,
+            &settings_button,
+            &layout,
+        );
         ui.window.replace(Some(window.clone()));
+        ui.apply_theme();
 
         connect_actions(
             &ui,
             &new_button,
             &import_button,
             &capture_button,
+            &settings_button,
             &save_button,
             &copy_button,
+            &window,
         );
         ui.reload_snapshots(None)?;
 
@@ -383,6 +387,30 @@ direct captures into its own local snapshot library.",
 
     fn repository(&self) -> SnapshotRepository<'_> {
         SnapshotRepository::new(self.database.connection())
+    }
+
+    fn apply_theme(&self) {
+        let theme_mode = self.settings.borrow().theme_mode;
+        adw::StyleManager::default().set_color_scheme(match theme_mode {
+            settings::ThemeMode::Dark => adw::ColorScheme::ForceDark,
+            settings::ThemeMode::Light => adw::ColorScheme::ForceLight,
+        });
+
+        if let Some(window) = self.window.borrow().as_ref() {
+            apply_theme_classes(window, theme_mode);
+        }
+    }
+
+    fn update_theme(&self, theme_mode: settings::ThemeMode) {
+        self.settings.borrow_mut().theme_mode = theme_mode;
+
+        if let Err(error) = self.settings.borrow().save(&self.paths) {
+            self.set_status(&format!("Settings save failed: {error}"));
+            return;
+        }
+
+        self.apply_theme();
+        self.set_status("Theme updated");
     }
 
     fn reload_snapshots(
@@ -703,8 +731,10 @@ fn connect_actions(
     new_button: &gtk::Button,
     import_button: &gtk::Button,
     capture_button: &gtk::Button,
+    settings_button: &gtk::Button,
     save_button: &gtk::Button,
     copy_button: &gtk::Button,
+    window: &adw::ApplicationWindow,
 ) {
     {
         let ui = Rc::clone(ui);
@@ -778,6 +808,15 @@ fn connect_actions(
 
     {
         let ui = Rc::clone(ui);
+        let parent_window = window.clone();
+        settings_button.connect_clicked(move |_| {
+            let settings_window = build_settings_window(&parent_window, &ui);
+            settings_window.present();
+        });
+    }
+
+    {
+        let ui = Rc::clone(ui);
         let list_box = ui.list_box.clone();
         list_box.connect_row_selected(move |_, row| {
             let Some(row) = row else {
@@ -794,6 +833,7 @@ fn build_snapshot_row(ui: &Rc<BlinkUi>, snapshot: &SnapshotSummary) -> gtk::List
     let row = gtk::ListBoxRow::new();
     row.set_selectable(true);
     row.set_activatable(true);
+    row.add_css_class("page-row");
 
     let content = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
@@ -1027,4 +1067,343 @@ fn current_timestamp_label() -> String {
         .and_then(|value| value.format("%d.%m.%Y %H:%M"))
         .map(|value| value.to_string())
         .unwrap_or_else(|_| "now".to_string())
+}
+
+fn build_window(
+    app: &adw::Application,
+    ui: &Rc<BlinkUi>,
+    title: &str,
+    new_button: &gtk::Button,
+    import_button: &gtk::Button,
+    capture_button: &gtk::Button,
+    settings_button: &gtk::Button,
+    layout: &gtk::Box,
+) -> adw::ApplicationWindow {
+    let window = adw::ApplicationWindow::builder()
+        .application(app)
+        .title(title)
+        .default_width(1080)
+        .default_height(720)
+        .build();
+    window.add_css_class("blink-window");
+    install_app_styles();
+
+    let header_bar = adw::HeaderBar::new();
+    header_bar.add_css_class("blink-headerbar");
+
+    let header_title = gtk::Label::builder().label(title).xalign(0.0).build();
+    header_title.add_css_class("title-3");
+
+    let header_logo = gtk::Image::from_file(blink_logo_path());
+    header_logo.set_pixel_size(42);
+    header_logo.set_size_request(42, 42);
+
+    let brand_box = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(8)
+        .margin_top(4)
+        .margin_bottom(4)
+        .margin_start(8)
+        .margin_end(12)
+        .build();
+    brand_box.append(&header_logo);
+    brand_box.append(&header_title);
+
+    let brand_frame = gtk::Frame::new(None);
+    brand_frame.set_child(Some(&brand_box));
+    brand_frame.add_css_class("card");
+    brand_frame.add_css_class("blink-chip");
+    brand_frame.set_margin_end(14);
+
+    header_bar.pack_start(&brand_frame);
+    header_bar.pack_start(new_button);
+    header_bar.pack_start(import_button);
+    header_bar.pack_start(capture_button);
+    header_bar.pack_start(settings_button);
+    header_bar.set_title_widget(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
+
+    let content = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(0)
+        .build();
+
+    let shell = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(0)
+        .build();
+    shell.add_css_class("blink-shell");
+
+    content.append(layout);
+    shell.append(&header_bar);
+    shell.append(&content);
+
+    window.set_content(Some(&shell));
+    apply_theme_classes(&window, ui.settings.borrow().theme_mode);
+    window
+}
+
+fn blink_logo_path() -> &'static str {
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../orbital-assets/logos/blink_logo.png"
+    )
+}
+
+fn apply_theme_classes(widget: &impl IsA<gtk::Widget>, theme_mode: settings::ThemeMode) {
+    widget.remove_css_class("theme-dark");
+    widget.remove_css_class("theme-light");
+    match theme_mode {
+        settings::ThemeMode::Dark => widget.add_css_class("theme-dark"),
+        settings::ThemeMode::Light => widget.add_css_class("theme-light"),
+    }
+}
+
+fn install_app_styles() {
+    let provider = gtk::CssProvider::new();
+    provider.load_from_data(
+        "
+        .header-action {
+            border-radius: 999px;
+            border: 1px solid alpha(currentColor, 0.16);
+            background: alpha(currentColor, 0.03);
+            padding: 4px 12px;
+        }
+
+        .header-action:hover {
+            background: alpha(currentColor, 0.06);
+        }
+
+        .header-action:active,
+        .header-action:checked {
+            background: alpha(currentColor, 0.09);
+            border-color: alpha(currentColor, 0.22);
+        }
+
+        .blink-window.theme-dark,
+        .blink-window.theme-dark > box,
+        .blink-window.theme-dark .blink-shell {
+            background: #231506;
+            color: #fff4de;
+        }
+
+        .blink-window.theme-dark .blink-headerbar {
+            background: #3a2106;
+            color: #fff2d8;
+            border-bottom: 1px solid alpha(#ffbf66, 0.18);
+        }
+
+        .blink-window.theme-dark .blink-sidebar,
+        .blink-window.theme-dark .blink-detail {
+            background: rgba(54, 31, 8, 0.92);
+            color: #fff4de;
+            border-radius: 24px;
+        }
+
+        .blink-window.theme-dark .blink-surface,
+        .blink-window.theme-dark .blink-chip {
+            background: rgba(68, 40, 10, 0.96);
+            color: #fff7e8;
+            border: 1px solid alpha(#ffb347, 0.22);
+            box-shadow: 0 10px 30px alpha(#000000, 0.16);
+        }
+
+        .blink-window.theme-dark entry,
+        .blink-window.theme-dark textview,
+        .blink-window.theme-dark textview text {
+            background: rgba(84, 51, 15, 0.96);
+            color: #fff7eb;
+            border: 1px solid alpha(#ffbf66, 0.22);
+        }
+
+        .blink-window.theme-dark label {
+            color: #fff2df;
+        }
+
+        .blink-window.theme-dark .dim-label {
+            color: alpha(#ffe3bc, 0.74);
+        }
+
+        .blink-window.theme-dark button,
+        .blink-window.theme-dark togglebutton,
+        .blink-window.theme-dark dropdown,
+        .blink-window.theme-dark combobox,
+        .blink-window.theme-dark entry {
+            color: #fff6e5;
+        }
+
+        .blink-window.theme-dark .header-action,
+        .blink-window.theme-dark button:not(.destructive-action) {
+            background: rgba(167, 97, 18, 0.78);
+            border: 1px solid alpha(#ffc06b, 0.18);
+        }
+
+        .blink-window.theme-dark row.page-row:selected {
+            background: linear-gradient(to right, rgba(255, 214, 138, 0.92), rgba(255, 170, 67, 0.84));
+            color: #4e2500;
+        }
+
+        .blink-window.theme-dark row.page-row:selected label {
+            color: #4e2500;
+        }
+
+        .blink-window.theme-dark .destructive-action {
+            background: linear-gradient(to right, #f28a1d, #d96a00);
+            color: #fff8ef;
+        }
+
+        .blink-window.theme-light,
+        .blink-window.theme-light > box,
+        .blink-window.theme-light .blink-shell {
+            background: #fff6e8;
+            color: #a25a00;
+        }
+
+        .blink-window.theme-light .blink-headerbar {
+            background: #ffedcf;
+            color: #a35e09;
+            border-bottom: 1px solid alpha(#f0b457, 0.32);
+        }
+
+        .blink-window.theme-light .blink-sidebar,
+        .blink-window.theme-light .blink-detail {
+            background: rgba(255, 245, 224, 0.95);
+            color: #a35e09;
+            border-radius: 24px;
+        }
+
+        .blink-window.theme-light .blink-surface,
+        .blink-window.theme-light .blink-chip {
+            background: rgba(255, 252, 246, 0.98);
+            color: #a35e09;
+            border: 1px solid alpha(#f0bc6a, 0.46);
+            box-shadow: 0 10px 28px alpha(#efb056, 0.18);
+        }
+
+        .blink-window.theme-light entry,
+        .blink-window.theme-light textview,
+        .blink-window.theme-light textview text {
+            background: rgba(255, 255, 255, 0.98);
+            color: #aa630d;
+            border: 1px solid alpha(#f0bc6a, 0.42);
+        }
+
+        .blink-window.theme-light label {
+            color: #a35e09;
+        }
+
+        .blink-window.theme-light .dim-label {
+            color: alpha(#b06e18, 0.76);
+        }
+
+        .blink-window.theme-light .header-action,
+        .blink-window.theme-light button:not(.destructive-action) {
+            background: rgba(255, 231, 188, 0.98);
+            border: 1px solid alpha(#efbf74, 0.44);
+            color: #a25c05;
+        }
+
+        .blink-window.theme-light row.page-row:selected {
+            background: linear-gradient(to right, rgba(255, 229, 181, 0.98), rgba(255, 204, 124, 0.94));
+            color: #945300;
+        }
+
+        .blink-window.theme-light row.page-row:selected label {
+            color: #945300;
+        }
+
+        .blink-window.theme-light .destructive-action {
+            background: linear-gradient(to right, #f29d2f, #db7a07);
+            color: #fffaf3;
+        }
+        ",
+    );
+
+    if let Some(display) = gtk::gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+}
+
+fn build_settings_window(
+    parent: &adw::ApplicationWindow,
+    ui: &Rc<BlinkUi>,
+) -> adw::PreferencesWindow {
+    let window = adw::PreferencesWindow::builder()
+        .title("Blink Einstellungen")
+        .transient_for(parent)
+        .search_enabled(false)
+        .default_width(760)
+        .default_height(560)
+        .build();
+    window.add_css_class("blink-window");
+    window.add_css_class("blink-settings-window");
+    apply_theme_classes(&window, ui.settings.borrow().theme_mode);
+
+    let personalization_page = adw::PreferencesPage::builder()
+        .title("Personalisierung")
+        .icon_name("applications-graphics-symbolic")
+        .build();
+    let help_page = adw::PreferencesPage::builder()
+        .title("Hilfe")
+        .icon_name("help-browser-symbolic")
+        .build();
+
+    let personalization_group = adw::PreferencesGroup::builder()
+        .title("Personalisierung")
+        .description("Farbstimmung und visuelle Grundrichtung fur Blink.")
+        .build();
+    let theme_row = adw::ActionRow::builder()
+        .title("Theme")
+        .subtitle("Schaltet zwischen der dunklen und hellen Blink-Farbwelt um.")
+        .build();
+    let theme_labels = settings::theme_mode_labels();
+    let theme_dropdown = gtk::DropDown::from_strings(&theme_labels);
+    theme_dropdown.set_valign(gtk::Align::Center);
+    theme_dropdown.set_selected(ui.settings.borrow().theme_mode.index());
+    theme_row.add_suffix(&theme_dropdown);
+    theme_row.set_activatable_widget(Some(&theme_dropdown));
+    personalization_group.add(&theme_row);
+    personalization_page.add(&personalization_group);
+
+    {
+        let ui = Rc::clone(ui);
+        let settings_window = window.clone();
+        theme_dropdown.connect_selected_notify(move |dropdown| {
+            let theme_mode = settings::ThemeMode::from_index(dropdown.selected());
+            if theme_mode == ui.settings.borrow().theme_mode {
+                return;
+            }
+
+            ui.update_theme(theme_mode);
+            apply_theme_classes(&settings_window, theme_mode);
+        });
+    }
+
+    let help_group = adw::PreferencesGroup::builder()
+        .title("Hilfe")
+        .description("Kurzubersicht zum aktuellen Stand von Blink.")
+        .build();
+    help_group.add(&info_row(
+        "Blink aktuell",
+        "Snapshots laufen lokal mit Import, direktem Capture, Vorschau, Tags und Notizen.",
+    ));
+    help_group.add(&info_row(
+        "Design-System",
+        "Blink folgt jetzt denselben Header-, Theme- und Button-Konventionen wie Drift.",
+    ));
+    help_page.add(&help_group);
+
+    window.add(&personalization_page);
+    window.add(&help_page);
+    window
+}
+
+fn info_row(title: &str, subtitle: &str) -> adw::ActionRow {
+    adw::ActionRow::builder()
+        .title(title)
+        .subtitle(subtitle)
+        .build()
 }
