@@ -139,8 +139,8 @@ impl BlinkUi {
 
         let sidebar_body = gtk::Label::builder()
             .label(
-                "Blink stores snapshots through orbital-core and now has a simple \
-portal-based screenshot flow for the first real captures.",
+                "Blink stores snapshots through orbital-core and now writes simple \
+direct captures into its own local snapshot library.",
             )
             .wrap(true)
             .xalign(0.0)
@@ -467,42 +467,40 @@ portal-based screenshot flow for the first real captures.",
     }
 
     fn capture_screenshot(self: &Rc<Self>) {
-        self.set_status("Waiting for screenshot selection...");
-
-        let ui = Rc::clone(self);
-        gtk::glib::MainContext::default().spawn_local(async move {
-            match capture::capture_interactive().await {
-                Ok(source_path) => {
-                    ui.set_status("Processing screenshot...");
-                    if let Err(error) = ui.store_captured_image(&source_path) {
-                        ui.set_status(&format!("Capture failed: {error}"));
-                    }
-                }
-                Err(error) => ui.set_status(&error),
-            }
-        });
-    }
-
-    fn store_captured_image(self: &Rc<Self>, source_path: &Path) -> orbital_core::OrbitalResult<()> {
         let capture_dir = self.paths.app_data_dir(OrbitalApp::Blink).join("captures");
-        fs::create_dir_all(&capture_dir)?;
-        wait_for_file_ready(source_path)?;
+        if let Err(error) = fs::create_dir_all(&capture_dir) {
+            self.set_status(&format!("Capture failed: {error}"));
+            return;
+        }
 
         let snapshot_id = generate_snapshot_id();
-        let extension = source_path
-            .extension()
-            .and_then(|value| value.to_str())
-            .map(|value| value.to_ascii_lowercase())
-            .unwrap_or_else(|| "png".to_string());
-        let target_path = capture_dir.join(format!("{}.{}", snapshot_id.as_str(), extension));
+        let timestamp_label = current_timestamp_label();
+        let target_path = capture_dir.join(format!("{}.png", snapshot_id.as_str()));
 
-        fs::copy(source_path, &target_path)?;
+        self.set_status("Waiting for screenshot selection...");
+        if let Err(error) = capture::capture_interactive(&target_path) {
+            self.set_status(&error);
+            return;
+        }
 
+        self.set_status("Processing screenshot...");
+        if let Err(error) = self.store_captured_image(snapshot_id, timestamp_label, target_path) {
+            self.set_status(&format!("Capture failed: {error}"));
+        }
+    }
+
+    fn store_captured_image(
+        self: &Rc<Self>,
+        snapshot_id: SnapshotId,
+        timestamp_label: String,
+        target_path: PathBuf,
+    ) -> orbital_core::OrbitalResult<()> {
+        wait_for_file_ready(&target_path)?;
         self.create_image_snapshot(
             snapshot_id,
-            format!("Screenshot {}", current_timestamp_label()),
+            format!("Screenshot {timestamp_label}"),
             target_path,
-            Some("Captured with XDG Desktop Portal".to_string()),
+            Some("Captured with Blink".to_string()),
         )?;
         self.set_status("Screenshot captured");
         Ok(())
