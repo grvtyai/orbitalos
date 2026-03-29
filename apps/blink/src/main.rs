@@ -1182,37 +1182,37 @@ fn install_app_styles() {
         .blink-window.theme-dark,
         .blink-window.theme-dark > box,
         .blink-window.theme-dark .blink-shell {
-            background: #2f1700;
-            color: #fff6de;
+            background: #1f1414;
+            color: #fff5de;
         }
 
         .blink-window.theme-dark .blink-headerbar {
-            background: #512400;
-            color: #fff2cf;
-            border-bottom: 1px solid alpha(#ffae3d, 0.22);
+            background: #40200b;
+            color: #fff0d2;
+            border-bottom: 1px solid alpha(#ffad33, 0.24);
         }
 
         .blink-window.theme-dark .blink-sidebar,
         .blink-window.theme-dark .blink-detail {
-            background: rgba(94, 44, 0, 0.90);
+            background: rgba(58, 28, 10, 0.92);
             color: #fff4d8;
             border-radius: 24px;
         }
 
         .blink-window.theme-dark .blink-surface,
         .blink-window.theme-dark .blink-chip {
-            background: rgba(120, 58, 0, 0.94);
-            color: #fff8e8;
-            border: 1px solid alpha(#ffb54d, 0.24);
+            background: rgba(86, 38, 8, 0.96);
+            color: #fff8e9;
+            border: 1px solid alpha(#ffb14a, 0.26);
             box-shadow: 0 10px 30px alpha(#000000, 0.16);
         }
 
         .blink-window.theme-dark entry,
         .blink-window.theme-dark textview,
         .blink-window.theme-dark textview text {
-            background: rgba(139, 69, 3, 0.94);
+            background: rgba(108, 48, 6, 0.95);
             color: #fff7eb;
-            border: 1px solid alpha(#ffbf57, 0.26);
+            border: 1px solid alpha(#ffbc57, 0.28);
         }
 
         .blink-window.theme-dark label {
@@ -1233,12 +1233,12 @@ fn install_app_styles() {
 
         .blink-window.theme-dark .header-action,
         .blink-window.theme-dark button:not(.destructive-action) {
-            background: rgba(198, 101, 0, 0.78);
-            border: 1px solid alpha(#ffc061, 0.22);
+            background: rgba(214, 109, 8, 0.84);
+            border: 1px solid alpha(#ffc35c, 0.24);
         }
 
         .blink-window.theme-dark row.page-row:selected {
-            background: linear-gradient(to right, rgba(255, 214, 104, 0.96), rgba(255, 143, 26, 0.90));
+            background: linear-gradient(to right, rgba(255, 205, 82, 0.96), rgba(255, 133, 18, 0.90));
             color: #4e2500;
         }
 
@@ -1254,56 +1254,56 @@ fn install_app_styles() {
         .blink-window.theme-light,
         .blink-window.theme-light > box,
         .blink-window.theme-light .blink-shell {
-            background: #fff8cf;
-            color: #ac6500;
+            background: #fff2bf;
+            color: #a95c00;
         }
 
         .blink-window.theme-light .blink-headerbar {
-            background: #fff0a8;
-            color: #a25a00;
-            border-bottom: 1px solid alpha(#efb243, 0.34);
+            background: #ffe082;
+            color: #9f5600;
+            border-bottom: 1px solid alpha(#eba432, 0.36);
         }
 
         .blink-window.theme-light .blink-sidebar,
         .blink-window.theme-light .blink-detail {
-            background: rgba(255, 245, 176, 0.94);
-            color: #a66000;
+            background: rgba(255, 239, 159, 0.95);
+            color: #a45a00;
             border-radius: 24px;
         }
 
         .blink-window.theme-light .blink-surface,
         .blink-window.theme-light .blink-chip {
-            background: rgba(255, 250, 214, 0.98);
-            color: #a45e00;
-            border: 1px solid alpha(#efb94f, 0.50);
-            box-shadow: 0 10px 28px alpha(#efb147, 0.18);
+            background: rgba(255, 246, 196, 0.98);
+            color: #a25700;
+            border: 1px solid alpha(#edab36, 0.52);
+            box-shadow: 0 10px 28px alpha(#eeab34, 0.20);
         }
 
         .blink-window.theme-light entry,
         .blink-window.theme-light textview,
         .blink-window.theme-light textview text {
-            background: rgba(255, 253, 234, 0.99);
-            color: #ad6804;
-            border: 1px solid alpha(#efb754, 0.44);
+            background: rgba(255, 251, 224, 0.99);
+            color: #a85d00;
+            border: 1px solid alpha(#edaa38, 0.46);
         }
 
         .blink-window.theme-light label {
-            color: #a45d00;
+            color: #a05600;
         }
 
         .blink-window.theme-light .dim-label {
-            color: alpha(#b26a00, 0.76);
+            color: alpha(#b05f00, 0.78);
         }
 
         .blink-window.theme-light .header-action,
         .blink-window.theme-light button:not(.destructive-action) {
-            background: rgba(255, 221, 95, 0.98);
-            border: 1px solid alpha(#eeb042, 0.46);
-            color: #9e5600;
+            background: linear-gradient(to bottom, rgba(255, 197, 67, 0.98), rgba(246, 154, 20, 0.98));
+            border: 1px solid alpha(#de890f, 0.54);
+            color: #8d4700;
         }
 
         .blink-window.theme-light row.page-row:selected {
-            background: linear-gradient(to right, rgba(255, 236, 132, 0.98), rgba(255, 198, 53, 0.96));
+            background: linear-gradient(to right, rgba(255, 220, 95, 0.98), rgba(255, 174, 34, 0.96));
             color: #945300;
         }
 
