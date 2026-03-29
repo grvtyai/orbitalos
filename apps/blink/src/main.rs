@@ -1187,7 +1187,7 @@ fn install_app_styles() {
         }
 
         .blink-window.theme-dark .blink-headerbar {
-            background-image: linear-gradient(to bottom, rgba(255, 221, 160, 0.14), rgba(255, 221, 160, 0.03) 34%, rgba(0, 0, 0, 0.00) 35%), linear-gradient(to bottom, #5a2d0d, #3f1f0a);
+            background-image: linear-gradient(to bottom, rgba(255, 238, 196, 0.26), rgba(255, 197, 96, 0.09) 28%, rgba(0, 0, 0, 0.00) 29%), linear-gradient(to right, rgba(116, 54, 8, 0.96), rgba(52, 27, 10, 0.98));
             color: #fff0d2;
             border-bottom: 1px solid alpha(#ffad33, 0.24);
         }
@@ -1233,8 +1233,25 @@ fn install_app_styles() {
 
         .blink-window.theme-dark .header-action,
         .blink-window.theme-dark button:not(.destructive-action) {
-            background-image: linear-gradient(to bottom, rgba(255, 245, 210, 0.24), rgba(255, 245, 210, 0.06) 36%, rgba(0, 0, 0, 0.00) 37%), linear-gradient(to bottom, rgba(236, 130, 22, 0.96), rgba(179, 81, 7, 0.88));
-            border: 1px solid alpha(#ffc35c, 0.24);
+            background-image: linear-gradient(to bottom, rgba(255, 245, 210, 0.12), rgba(255, 245, 210, 0.03) 34%, rgba(0, 0, 0, 0.00) 35%), linear-gradient(to bottom, rgba(30, 26, 24, 0.98), rgba(15, 13, 12, 0.98));
+            border: 1px solid alpha(#ffb24a, 0.42);
+            color: #ffbf57;
+            box-shadow: inset 0 1px 0 alpha(#fff2cf, 0.05), 0 0 0 1px alpha(#000000, 0.12);
+        }
+
+        .blink-window.theme-dark .header-action:hover,
+        .blink-window.theme-dark button:not(.destructive-action):hover {
+            background-image: linear-gradient(to bottom, rgba(255, 245, 210, 0.16), rgba(255, 245, 210, 0.05) 34%, rgba(0, 0, 0, 0.00) 35%), linear-gradient(to bottom, rgba(38, 33, 30, 0.98), rgba(18, 16, 14, 0.98));
+            border: 1px solid alpha(#ffc76a, 0.52);
+            color: #ffd27a;
+        }
+
+        .blink-window.theme-dark .header-action:active,
+        .blink-window.theme-dark .header-action:checked,
+        .blink-window.theme-dark button:not(.destructive-action):active {
+            background-image: linear-gradient(to bottom, rgba(255, 245, 210, 0.10), rgba(255, 245, 210, 0.02) 34%, rgba(0, 0, 0, 0.00) 35%), linear-gradient(to bottom, rgba(24, 21, 19, 0.98), rgba(10, 9, 8, 0.98));
+            border: 1px solid alpha(#ffad3d, 0.60);
+            color: #ffb84d;
         }
 
         .blink-window.theme-dark row.page-row:selected {
