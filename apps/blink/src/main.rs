@@ -1194,14 +1194,14 @@ fn install_app_styles() {
 
         .blink-window.theme-dark .blink-sidebar,
         .blink-window.theme-dark .blink-detail {
-            background: rgba(58, 28, 10, 0.92);
+            background: rgba(28, 24, 22, 0.96);
             color: #fff4d8;
             border-radius: 24px;
         }
 
         .blink-window.theme-dark .blink-surface,
         .blink-window.theme-dark .blink-chip {
-            background-image: linear-gradient(to bottom, rgba(255, 231, 181, 0.18), rgba(255, 231, 181, 0.04) 38%, rgba(0, 0, 0, 0.00) 39%), linear-gradient(to bottom, rgba(116, 50, 10, 0.98), rgba(78, 33, 7, 0.96));
+            background-image: linear-gradient(to bottom, rgba(255, 231, 181, 0.12), rgba(255, 231, 181, 0.03) 36%, rgba(0, 0, 0, 0.00) 37%), linear-gradient(to bottom, rgba(42, 36, 33, 0.98), rgba(30, 26, 24, 0.98));
             color: #fff8e9;
             border: 1px solid alpha(#ffb14a, 0.26);
             box-shadow: 0 10px 30px alpha(#000000, 0.16);
@@ -1210,7 +1210,7 @@ fn install_app_styles() {
         .blink-window.theme-dark entry,
         .blink-window.theme-dark textview,
         .blink-window.theme-dark textview text {
-            background: rgba(108, 48, 6, 0.95);
+            background: rgba(36, 31, 28, 0.98);
             color: #fff7eb;
             border: 1px solid alpha(#ffbc57, 0.28);
         }
